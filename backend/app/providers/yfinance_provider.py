@@ -2,6 +2,7 @@
 import yfinance as yf
 import logging
 import requests
+import time
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from ..core.models import MarketData, OptionChainData, OptionData, OptionType
@@ -9,7 +10,7 @@ from ..core.models import MarketData, OptionChainData, OptionData, OptionType
 logger = logging.getLogger(__name__)
 
 class YahooFinanceProvider:
-    """Yahoo Finance with NSE API fallback"""
+    """Yahoo Finance with proper headers and NSE fallback"""
     
     def __init__(self):
         self.symbol_map = {
@@ -20,55 +21,77 @@ class YahooFinanceProvider:
         }
         self._cache = {}
         self._cache_time = {}
-        self._cache_ttl = 60  # Increased to 60 seconds
-        self._use_nse_fallback = False
+        self._cache_ttl = 60
         
-        # NSE session
+        # NSE session with proper headers
         self.nse_session = requests.Session()
         self.nse_session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'en-US,en;q=0.9',
-            'Referer': 'https://www.nseindia.com/'
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Referer': 'https://www.nseindia.com/',
+            'Origin': 'https://www.nseindia.com',
+            'Connection': 'keep-alive',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin'
         })
+        
+        # Try to get NSE cookies
+        try:
+            self.nse_session.get('https://www.nseindia.com', timeout=10)
+            logger.info("NSE session initialized")
+        except Exception as e:
+            logger.warning(f"NSE init failed: {e}")
     
     def get_ltp(self, symbol: str = "NIFTY") -> float:
-        """Get live price from Yahoo Finance with NSE fallback"""
+        """Get live price - tries multiple sources"""
         cache_key = f"ltp_{symbol}"
         if cache_key in self._cache and self._cache_time.get(cache_key):
             age = (datetime.now() - self._cache_time[cache_key]).total_seconds()
             if age < self._cache_ttl:
                 return self._cache[cache_key]
         
-        # Try Yahoo first
-        try:
-            ticker = self.symbol_map.get(symbol, symbol)
-            stock = yf.Ticker(ticker)
-            data = stock.history(period="1d")
-            
-            if not data.empty:
-                ltp = float(data['Close'].iloc[-1])
-                self._cache[cache_key] = ltp
-                self._cache_time[cache_key] = datetime.now()
-                logger.info(f"Yahoo LTP for {symbol}: {ltp}")
-                return ltp
-        except Exception as e:
-            logger.warning(f"Yahoo failed for {symbol}: {e}")
+        # Try Yahoo Finance first
+        ltp = self._get_yahoo_ltp(symbol)
+        if ltp and ltp > 0:
+            self._cache[cache_key] = ltp
+            self._cache_time[cache_key] = datetime.now()
+            return ltp
         
-        # Fallback to NSE API
-        try:
-            logger.info(f"Trying NSE fallback for {symbol}")
-            ltp = self._get_nse_ltp(symbol)
-            if ltp and ltp > 0:
-                self._cache[cache_key] = ltp
-                self._cache_time[cache_key] = datetime.now()
-                logger.info(f"NSE fallback LTP for {symbol}: {ltp}")
-                return ltp
-        except Exception as e:
-            logger.warning(f"NSE fallback failed: {e}")
+        # Try NSE API
+        ltp = self._get_nse_ltp(symbol)
+        if ltp and ltp > 0:
+            self._cache[cache_key] = ltp
+            self._cache_time[cache_key] = datetime.now()
+            return ltp
         
         # Final fallback
         return self._get_fallback_price(symbol)
+    
+    def _get_yahoo_ltp(self, symbol: str) -> float:
+        """Get LTP from Yahoo Finance with retry"""
+        try:
+            ticker = self.symbol_map.get(symbol, symbol)
+            
+            # Try with different periods
+            for period in ["1d", "5d"]:
+                try:
+                    stock = yf.Ticker(ticker)
+                    data = stock.history(period=period)
+                    if not data.empty:
+                        ltp = float(data['Close'].iloc[-1])
+                        if ltp and ltp > 0:
+                            logger.info(f"Yahoo LTP for {symbol}: {ltp}")
+                            return ltp
+                except:
+                    continue
+            
+            return 0
+        except Exception as e:
+            logger.warning(f"Yahoo failed for {symbol}: {e}")
+            return 0
     
     def _get_nse_ltp(self, symbol: str) -> float:
         """Get LTP from NSE API"""
@@ -78,8 +101,11 @@ class YahooFinanceProvider:
                 "BANKNIFTY": "NIFTY BANK"
             }
             
-            # Get fresh session
-            self.nse_session.get('https://www.nseindia.com', timeout=10)
+            # Refresh session
+            try:
+                self.nse_session.get('https://www.nseindia.com', timeout=10)
+            except:
+                pass
             
             url = "https://www.nseindia.com/api/equity-stockIndices"
             response = self.nse_session.get(url, timeout=15)
@@ -88,40 +114,42 @@ class YahooFinanceProvider:
                 data = response.json()
                 for index in data.get('data', []):
                     if indices.get(symbol) == index.get('indexName'):
-                        return float(index.get('last', 0))
+                        ltp = float(index.get('last', 0))
+                        if ltp and ltp > 0:
+                            logger.info(f"NSE LTP for {symbol}: {ltp}")
+                            return ltp
             return 0
         except Exception as e:
-            logger.error(f"NSE API error: {e}")
+            logger.warning(f"NSE API error for {symbol}: {e}")
             return 0
     
     def get_market_data(self, symbol: str = "NIFTY", timeframe: str = "5m", days: int = 5) -> List[MarketData]:
-        """Get historical market data"""
+        """Get market data"""
         try:
+            # Try Yahoo first
             ticker = self.symbol_map.get(symbol, symbol)
             stock = yf.Ticker(ticker)
             data = stock.history(period=f"{days}d")
             
-            market_data = []
-            for idx, row in data.iterrows():
-                market_data.append(MarketData(
-                    symbol=symbol,
-                    timestamp=idx.to_pydatetime(),
-                    open=float(row['Open']),
-                    high=float(row['High']),
-                    low=float(row['Low']),
-                    close=float(row['Close']),
-                    volume=int(row['Volume']),
-                    vwap=float(row['Close'])
-                ))
-            
-            if market_data:
+            if not data.empty:
+                market_data = []
+                for idx, row in data.iterrows():
+                    market_data.append(MarketData(
+                        symbol=symbol,
+                        timestamp=idx.to_pydatetime(),
+                        open=float(row['Open']),
+                        high=float(row['High']),
+                        low=float(row['Low']),
+                        close=float(row['Close']),
+                        volume=int(row['Volume']),
+                        vwap=float(row['Close'])
+                    ))
                 return market_data
         except Exception as e:
             logger.warning(f"Yahoo market data failed: {e}")
         
-        # Fallback to NSE
+        # Try NSE
         try:
-            logger.info(f"Trying NSE market data for {symbol}")
             nse_data = self._get_nse_market_data(symbol)
             if nse_data:
                 return nse_data
@@ -138,7 +166,6 @@ class YahooFinanceProvider:
                 "BANKNIFTY": "NIFTY BANK"
             }
             
-            self.nse_session.get('https://www.nseindia.com', timeout=10)
             url = "https://www.nseindia.com/api/equity-stockIndices"
             response = self.nse_session.get(url, timeout=15)
             
