@@ -1,0 +1,67 @@
+# Virtual Environment
+venv/
+.venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+*.cover
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment Variables (Sensitive)
+.env
+.env.local
+.env.*.local
+
+# Logs
+logs/
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS
+Thumbs.db
+desktop.ini
+
+# Test files (optional - keep if you want)
+test_*.py
+check_*.py
+debug_*.py
+extract_*.py
+find_*.py
+parse_*.py
+test_*.py
+debug_*.py
+
+# Backup files
+*.bak
+*.tmp
+
+# Railway
+.railway/
+
+# ============================================================
+# KEEP THESE FILES (Don't ignore)
+# ============================================================
+# !run.py
+# !requirements.txt
+# !backend/
+# !frontend/
+# !README.md
+# !.env.example

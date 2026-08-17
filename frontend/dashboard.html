@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Athena-X Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #0f0f1a; color: #fff; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+        .header h1 { font-size: 28px; }
+        .status { padding: 8px 20px; border-radius: 20px; font-size: 14px; background: #00ff8844; color: #00ff88; }
+        .status-badge { padding: 3px 10px; border-radius: 12px; font-size: 12px; }
+        .status-open { background: #ffaa0044; color: #ffaa00; }
+        .status-completed { background: #00ff8844; color: #00ff88; }
+        .status-cancelled { background: #ff446644; color: #ff4466; }
+        
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .card { background: #1a1a2e; padding: 20px; border-radius: 12px; border: 1px solid #2a2a4e; }
+        .card h3 { color: #888; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+        .card .value { font-size: 28px; font-weight: bold; }
+        .positive { color: #00ff88; }
+        .negative { color: #ff4466; }
+        .neutral { color: #ffaa00; }
+        
+        .signal-section { background: #1a1a2e; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 1px solid #2a2a4e; }
+        .signal { font-size: 32px; font-weight: bold; margin: 10px 0; }
+        .refresh-btn { background: #2a2a4e; border: none; color: #fff; padding: 10px 25px; border-radius: 8px; cursor: pointer; }
+        .refresh-btn:hover { background: #3a3a6e; }
+        
+        .indices-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-top: 20px; }
+        .index-card { background: #1a1a2e; padding: 15px; border-radius: 12px; border: 1px solid #2a2a4e; }
+        .index-card h4 { color: #888; font-size: 14px; margin-bottom: 5px; }
+        .index-card .price { font-size: 22px; font-weight: bold; }
+        .index-card .change { font-size: 14px; }
+        .index-card .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #00ff88; margin-right: 5px; animation: pulse 1s infinite; }
+        
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        
+        .bullish { color: #00ff88; }
+        .bearish { color: #ff4466; }
+        
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media (max-width: 800px) { .two-col { grid-template-columns: 1fr; } }
+        
+        .table-container { max-height: 300px; overflow-y: auto; }
+        .order-table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        .order-table th { background: #2a2a4e; padding: 10px; text-align: left; }
+        .order-table td { padding: 10px; border-bottom: 1px solid #2a2a4e; }
+        .order-table tr:hover { background: #1a1a2e; }
+        
+        .refresh-btn-sm { background: #2a2a4e; border: none; color: #fff; padding: 5px 15px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+        .refresh-btn-sm:hover { background: #3a3a6e; }
+        
+        .smart-orders { margin-top: 20px; }
+        .oco-badge { background: #00ff8844; color: #00ff88; padding: 2px 8px; border-radius: 10px; font-size: 10px; }
+        
+        .footer { margin-top: 30px; text-align: center; color: #666; font-size: 12px; }
+        .real-balance { color: #00ff88; font-size: 14px; }
+        .config-balance { color: #ffaa00; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧠 Athena-X Portfolio Manager</h1>
+            <div>
+                <span class="status" id="status">🟢 Live</span>
+                <button class="refresh-btn-sm" onclick="refreshAll()">🔄 Refresh</button>
+            </div>
+        </div>
+        
+        <div class="grid" id="stats">
+            <div class="card">
+                <h3>Capital <span class="real-balance">(Real)</span></h3>
+                <div class="value" id="capital">Loading...</div>
+                <div style="font-size:12px;color:#666;margin-top:4px;" id="capital_source"></div>
+            </div>
+            <div class="card"><h3>Today's P&L</h3><div class="value" id="today_pnl">₹0.00</div></div>
+            <div class="card"><h3>Win Rate</h3><div class="value" id="win_rate">0.0%</div></div>
+            <div class="card"><h3>Positions</h3><div class="value" id="positions_count">0</div></div>
+        </div>
+        
+        <div class="signal-section">
+            <h2>📊 Signal</h2>
+            <div class="signal" id="signal">Loading...</div>
+            <div id="signal_reason">Fetching live data...</div>
+        </div>
+        
+        <div class="indices-grid" id="indices">
+            <div class="index-card"><h4><span class="live-dot"></span>🇮🇳 NIFTY</h4><div class="price" id="nifty_price">---</div><div class="change" id="nifty_change">---</div></div>
+            <div class="index-card"><h4><span class="live-dot"></span>🏦 BANK NIFTY</h4><div class="price" id="banknifty_price">---</div><div class="change" id="banknifty_change">---</div></div>
+            <div class="index-card"><h4><span class="live-dot"></span>💰 FINNIFTY</h4><div class="price" id="finnifty_price">---</div><div class="change" id="finnifty_change">---</div></div>
+            <div class="index-card"><h4><span class="live-dot"></span>📈 SENSEX</h4><div class="price" id="sensex_price">---</div><div class="change" id="sensex_change">---</div></div>
+        </div>
+        
+        <div class="two-col">
+            <div class="card">
+                <h3>📋 Live Orders <span class="oco-badge">OCO Ready</span></h3>
+                <div class="table-container">
+                    <table class="order-table" id="orders_table">
+                        <thead><tr><th>Symbol</th><th>Type</th><th>Qty</th><th>Price</th><th>Status</th></tr></thead>
+                        <tbody id="orders_body"><tr><td colspan="5">No orders</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card">
+                <h3>💼 Live Positions</h3>
+                <div class="table-container">
+                    <table class="order-table" id="positions_table">
+                        <thead><tr><th>Symbol</th><th>Qty</th><th>Avg Price</th><th>LTP</th><th>P&L</th></tr></thead>
+                        <tbody id="positions_body"><tr><td colspan="5">No positions</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card smart-orders">
+            <h3>⚡ Smart Orders (GTT/OCO)</h3>
+            <div class="table-container">
+                <table class="order-table" id="smart_table">
+                    <thead><tr><th>Symbol</th><th>Type</th><th>Entry</th><th>Target</th><th>SL</th><th>Status</th></tr></thead>
+                    <tbody id="smart_body"><tr><td colspan="6">No smart orders</td></tr></tbody>
+                </table>
+            </div>
+        </div>
+        
+        <div class="footer">
+            Athena-X v4.0 | Smart Orders Active | Real-time Streaming
+        </div>
+    </div>
+    
+    <script>
+        const idMap = {
+            'NIFTY': { price: 'nifty_price', change: 'nifty_change' },
+            'BANKNIFTY': { price: 'banknifty_price', change: 'banknifty_change' },
+            'FINNIFTY': { price: 'finnifty_price', change: 'finnifty_change' },
+            'SENSEX': { price: 'sensex_price', change: 'sensex_change' }
+        };
+        let previousPrices = {};
+        
+        async function refreshAll() {
+            const status = document.getElementById('status');
+            status.textContent = '⏳ Loading...';
+            
+            try {
+                // 1. Get real balance from Groww
+                const balanceResp = await fetch('/account/balance');
+                const balanceData = await balanceResp.json();
+                
+                if (balanceData && balanceData.data) {
+                    const balance = balanceData.data;
+                    const available = balance.available || 0;
+                    const total = balance.clear_cash || 0;
+                    
+                    document.getElementById('capital').textContent = '₹' + available.toFixed(2);
+                    document.getElementById('capital_source').textContent = 
+                        balance.is_fallback ? '⚠️ Using config fallback' : '✅ Live from Groww';
+                    document.getElementById('capital_source').style.color = 
+                        balance.is_fallback ? '#ffaa00' : '#00ff88';
+                }
+                
+                // 2. Get indices data
+                const indicesResp = await fetch('/all-indices');
+                const indicesData = await indicesResp.json();
+                
+                for (const [key, indexData] of Object.entries(indicesData)) {
+                    const priceEl = document.getElementById(idMap[key].price);
+                    const changeEl = document.getElementById(idMap[key].change);
+                    if (indexData.price) {
+                        priceEl.textContent = '₹' + indexData.price.toFixed(2);
+                        const prev = previousPrices[key] || indexData.price;
+                        const change = ((indexData.price - prev) / prev * 100);
+                        previousPrices[key] = indexData.price;
+                        changeEl.textContent = (change > 0 ? '+' : '') + change.toFixed(2) + '%';
+                        changeEl.className = 'change ' + (change > 0 ? 'bullish' : (change < 0 ? 'bearish' : 'neutral'));
+                    } else {
+                        priceEl.textContent = '⚠️';
+                        changeEl.textContent = indexData.error || 'No data';
+                        changeEl.className = 'change error';
+                    }
+                }
+                
+                // 3. Get signal
+                const signalResp = await fetch('/analyze/NIFTY');
+                const signalData = await signalResp.json();
+                if (signalData && signalData.signal) {
+                    const signal = signalData.signal;
+                    document.getElementById('signal').textContent = signal.action || 'WAIT';
+                    document.getElementById('signal_reason').textContent = signal.reason || 'Market analysis complete';
+                    const signalEl = document.getElementById('signal');
+                    signalEl.className = 'signal ' + (signal.action === 'STRONG_BUY' || signal.action === 'BUY' ? 'bullish' : 
+                                                       (signal.action === 'STRONG_SELL' || signal.action === 'SELL' ? 'bearish' : 'neutral'));
+                }
+                
+                // 4. Get orders
+                const ordersResp = await fetch('/orders');
+                const ordersData = await ordersResp.json();
+                updateOrdersTable(ordersData.orders || []);
+                
+                // 5. Get positions
+                const positionsResp = await fetch('/positions');
+                const positionsData = await positionsResp.json();
+                updatePositionsTable(positionsData.positions || []);
+                
+                // 6. Get smart orders
+                const smartResp = await fetch('/smart/orders');
+                const smartData = await smartResp.json();
+                updateSmartTable(smartData.orders || []);
+                
+                // 7. Get performance
+                const perfResp = await fetch('/performance/summary');
+                const perfData = await perfResp.json();
+                if (perfData) {
+                    document.getElementById('today_pnl').textContent = (perfData.total_pnl >= 0 ? '+' : '') + '₹' + (perfData.total_pnl || 0).toFixed(2);
+                    document.getElementById('today_pnl').className = 'value ' + (perfData.total_pnl >= 0 ? 'positive' : 'negative');
+                    document.getElementById('win_rate').textContent = (perfData.win_rate || 0).toFixed(1) + '%';
+                    document.getElementById('positions_count').textContent = perfData.total_trades || 0;
+                }
+                
+                status.textContent = '🟢 Live';
+                
+            } catch(e) {
+                console.error('Error fetching data:', e);
+                document.getElementById('signal').textContent = '⚠️ ERROR';
+                document.getElementById('signal_reason').textContent = 'Failed to fetch data. Check server.';
+                status.textContent = '🔴 Error';
+            }
+        }
+        
+        function updateOrdersTable(orders) {
+            const tbody = document.getElementById('orders_body');
+            if (!orders || orders.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5">No orders</td></tr>';
+                return;
+            }
+            tbody.innerHTML = orders.map(order => `
+                <tr>
+                    <td>${order.trading_symbol || 'N/A'}</td>
+                    <td>${order.transaction_type || 'N/A'}</td>
+                    <td>${order.quantity || 0}</td>
+                    <td>₹${order.price || 0}</td>
+                    <td><span class="status-badge status-${(order.status || 'OPEN').toLowerCase()}">${order.status || 'OPEN'}</span></td>
+                </tr>
+            `).join('');
+        }
+        
+        function updatePositionsTable(positions) {
+            const tbody = document.getElementById('positions_body');
+            if (!positions || positions.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5">No positions</td></tr>';
+                return;
+            }
+            tbody.innerHTML = positions.map(pos => {
+                const pnl = pos.unrealized_pnl || 0;
+                return `
+                <tr>
+                    <td>${pos.trading_symbol || 'N/A'}</td>
+                    <td>${pos.quantity || 0}</td>
+                    <td>₹${pos.average_price || 0}</td>
+                    <td>₹${pos.ltp || 0}</td>
+                    <td class="${pnl >= 0 ? 'positive' : 'negative'}">${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}</td>
+                </tr>
+            `}).join('');
+        }
+        
+        function updateSmartTable(orders) {
+            const tbody = document.getElementById('smart_body');
+            if (!orders || orders.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6">No smart orders</td></tr>';
+                return;
+            }
+            tbody.innerHTML = orders.map(order => `
+                <tr>
+                    <td>${order.trading_symbol || 'N/A'}</td>
+                    <td>${order.order_type || 'N/A'}</td>
+                    <td>₹${order.trigger_price || 0}</td>
+                    <td>₹${order.target_price || 0}</td>
+                    <td>₹${order.stop_loss || 0}</td>
+                    <td><span class="status-badge status-${(order.status || 'ACTIVE').toLowerCase()}">${order.status || 'ACTIVE'}</span></td>
+                </tr>
+            `).join('');
+        }
+        
+        // Refresh every 30 seconds
+        refreshAll();
+        setInterval(refreshAll, 120000);
+        // Also update the live price updates from 3000 to 10000 (10 seconds)
+     setInterval(() => {
+     // ... live update code ...        
+      }, 10000);
+    </script>
+</body>
+</html>
