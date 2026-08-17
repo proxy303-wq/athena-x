@@ -10,7 +10,7 @@ from ..analytics import (
 )
 from ..brain import AthenaBrain, TradePlanner
 from ..providers.groww import get_groww_provider
-from ..providers.free_data_provider import FreeDataProvider
+from ..providers.nse_provider import NSEProvider
 from ..core.config import settings
 from .account_service import AccountService
 from .alert_service import AlertService
@@ -30,7 +30,7 @@ class DecisionService:
         self.groww_provider = get_groww_provider()
         
         # Free data provider - for market data (no rate limits)
-        self.free_provider = FreeDataProvider()
+        self.free_provider = NSEProvider()
         
         # Other services
         self.account_service = AccountService()
