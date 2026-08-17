@@ -6,14 +6,13 @@ from typing import Optional, Dict, Any, List
 import logging
 
 from ..services.decision_service import DecisionService
-from ..providers.free_data_provider import FreeDataProvider
 from ..services.order_service import OrderService
 from ..services.account_service import AccountService
 from ..services.health_service import HealthService
 from ..services.data_validator import DataValidator
 from ..services.ml_predictor import MLPredictor
 from ..services.backtest import BacktestEngine
-from ..providers.free_data_provider import FreeDataProvider
+from ..providers.nse_provider import NSEProvider  # ✅ Use NSE instead of yfinance
 from ..providers.groww import get_groww_provider
 
 logger = logging.getLogger(__name__)
@@ -28,7 +27,7 @@ health_service = HealthService()
 validator = DataValidator()
 ml_predictor = MLPredictor()
 backtest_engine = BacktestEngine()
-free_provider = FreeDataProvider()  # ✅ FREE data provider
+nse_provider = NSEProvider()  # ✅ NSE provider (no rate limits, no IP blocking)
 
 # Define all indices
 INDICES = {
@@ -50,7 +49,7 @@ async def root():
         "status": "running",
         "timestamp": datetime.now().isoformat(),
         "features": {
-            "market_data": "4 Indices (via yfinance - no rate limits)",
+            "market_data": "4 Indices (via NSE API - no rate limits)",
             "trading": "Groww API (orders only)",
             "ml": "LSTM Price Prediction",
             "backtesting": "Historical Strategy Testing",
@@ -75,25 +74,22 @@ async def health_ready():
     return {"ready": True, "status": "healthy"}
 
 # ============================================================
-# MARKET DATA - FREE PROVIDER (NO RATE LIMITS)
+# MARKET DATA - NSE API (NO RATE LIMITS)
 # ============================================================
 
 @router.get("/all-indices")
 async def get_all_indices():
-    """
-    Get live data for all indices from FREE provider (yfinance)
-    This has NO rate limits!
-    """
+    """Get live data for all indices from NSE API"""
     try:
         results = {}
         for key, info in INDICES.items():
             try:
-                # ✅ Use FREE provider for live data
-                ltp = free_provider.get_ltp(info["symbol"])
+                # Get LTP from NSE provider
+                ltp = nse_provider.get_ltp(info["symbol"])
                 
-                # If free provider fails, try Groww as fallback
+                # If NSE fails, try Groww as fallback
                 if ltp is None or ltp <= 0:
-                    logger.warning(f"Free data failed for {key}, using Groww fallback")
+                    logger.warning(f"NSE data failed for {key}, using Groww fallback")
                     try:
                         ltp = groww_provider.get_ltp(info["symbol"])
                     except:
@@ -123,12 +119,12 @@ async def get_all_indices():
 
 @router.get("/ltp/{symbol}")
 async def get_ltp(symbol: str):
-    """Get live LTP from FREE provider"""
+    """Get live LTP from NSE API"""
     try:
-        # ✅ Use FREE provider
-        ltp = free_provider.get_ltp(symbol)
+        # Get from NSE provider
+        ltp = nse_provider.get_ltp(symbol)
         
-        # Fallback to Groww if free provider fails
+        # Fallback to Groww if NSE fails
         if ltp is None or ltp <= 0:
             try:
                 ltp = groww_provider.get_ltp(symbol)
@@ -152,22 +148,19 @@ async def get_ltp(symbol: str):
         logger.error(f"Error fetching LTP for {symbol}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/test-yfinance")
-async def test_yfinance():
-    """Test if yfinance is working"""
+@router.get("/test-nse")
+async def test_nse():
+    """Test NSE API connection"""
     try:
-        import yfinance as yf
-        stock = yf.Ticker("^NSEI")
-        data = stock.history(period="1d")
+        ltp = nse_provider.get_ltp("NIFTY")
         return {
-            "yfinance_installed": True,
-            "data_available": not data.empty,
-            "latest_close": float(data['Close'].iloc[-1]) if not data.empty else None,
+            "nse_working": ltp is not None,
+            "nifty_ltp": ltp,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         return {
-            "yfinance_installed": False,
+            "nse_working": False,
             "error": str(e),
             "timestamp": datetime.now().isoformat()
         }
@@ -445,7 +438,7 @@ async def dashboard():
                 <p>📚 <a href="/docs" style="color: #00ff88;">API Documentation</a></p>
                 <p>🔍 <a href="/health" style="color: #ffaa00;">Health Check</a></p>
                 <hr style="border-color: #2a2a4e;">
-                <p style="color: #666;">Athena-X v5.0 | Free Market Data | Groww Execution</p>
+                <p style="color: #666;">Athena-X v5.0 | NSE Data | Groww Execution</p>
             </body>
         </html>
         """
