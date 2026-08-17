@@ -2,7 +2,10 @@
 nixPkgs = ["python311"]
 
 [phases.install]
-cmds = ["pip install -r requirements.txt --break-system-packages"]
+cmds = [
+  "python -m pip install --break-system-packages --upgrade pip",
+  "python -m pip install --break-system-packages -r requirements.txt"
+]
 
 [start]
 cmd = "python run.py"
