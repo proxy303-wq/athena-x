@@ -6,6 +6,7 @@ from typing import Optional, Dict, Any, List
 import logging
 
 from ..services.decision_service import DecisionService
+from ..providers.free_data_provider import FreeDataProvider
 from ..services.order_service import OrderService
 from ..services.account_service import AccountService
 from ..services.health_service import HealthService

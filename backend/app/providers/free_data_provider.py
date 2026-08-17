@@ -1,6 +1,7 @@
 # backend/app/providers/free_data_provider.py
 import yfinance as yf
 import logging
+import requests
 from datetime import datetime, timedelta
 from typing import List, Optional
 from ..core.models import MarketData
@@ -9,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 class FreeDataProvider:
     """
-    Free market data provider using yfinance
+    Free market data provider using yfinance with proper headers
     NO rate limits - use this for all market data
     """
     
@@ -23,6 +24,12 @@ class FreeDataProvider:
         self._cache = {}
         self._cache_time = {}
         self._cache_ttl = 30  # 30 seconds cache
+        
+        # Set user-agent to avoid blocking
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        })
     
     def get_ltp(self, symbol: str = "NIFTY") -> Optional[float]:
         """Get live price from Yahoo Finance"""
@@ -36,14 +43,31 @@ class FreeDataProvider:
                 if age < self._cache_ttl:
                     return self._cache[cache_key]
             
-            stock = yf.Ticker(ticker)
-            data = stock.history(period="1d")
+            # Try with proper session
+            try:
+                stock = yf.Ticker(ticker, session=self.session)
+                data = stock.history(period="1d")
+            except:
+                # Fallback to default
+                stock = yf.Ticker(ticker)
+                data = stock.history(period="1d")
             
             if not data.empty:
                 ltp = float(data['Close'].iloc[-1])
                 self._cache[cache_key] = ltp
                 self._cache_time[cache_key] = datetime.now()
                 return ltp
+            
+            # If no data, try with different period
+            try:
+                data = stock.history(period="2d")
+                if not data.empty:
+                    ltp = float(data['Close'].iloc[-1])
+                    self._cache[cache_key] = ltp
+                    self._cache_time[cache_key] = datetime.now()
+                    return ltp
+            except:
+                pass
             
             return None
         except Exception as e:
@@ -54,8 +78,13 @@ class FreeDataProvider:
         """Get historical market data"""
         try:
             ticker = self.symbol_map.get(symbol, symbol)
-            stock = yf.Ticker(ticker)
-            data = stock.history(period=f"{days}d")
+            
+            try:
+                stock = yf.Ticker(ticker, session=self.session)
+                data = stock.history(period=f"{days}d")
+            except:
+                stock = yf.Ticker(ticker)
+                data = stock.history(period=f"{days}d")
             
             market_data = []
             for idx, row in data.iterrows():
