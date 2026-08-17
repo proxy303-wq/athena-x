@@ -12,7 +12,7 @@ from ..services.health_service import HealthService
 from ..services.data_validator import DataValidator
 from ..services.ml_predictor import MLPredictor
 from ..services.backtest import BacktestEngine
-from ..providers.nse_provider import NSEProvider
+from ..providers.yfinance_provider import YahooFinanceProvider
 from ..providers.groww import get_groww_provider
 from ..core.config import settings
 
@@ -24,7 +24,7 @@ decision_service = DecisionService()
 order_service = OrderService()
 account_service = AccountService()
 groww_provider = get_groww_provider()
-nse_provider = NSEProvider()
+yahoo_provider = YahooFinanceProvider()
 health_service = HealthService()
 validator = DataValidator()
 ml_predictor = MLPredictor()
@@ -50,7 +50,7 @@ async def root():
         "status": "running",
         "timestamp": datetime.now().isoformat(),
         "features": {
-            "market_data": "NSE API (no rate limits)",
+            "market_data": "Yahoo Finance (no rate limits)",
             "analytics": "6 Engines + Advanced Technical Analysis",
             "trading": "Auto-execution with OCO/SL",
             "ml": "LSTM Price Prediction",
@@ -65,7 +65,7 @@ async def root():
             "dashboard": "/dashboard",
             "analyze": "/analyze/{symbol}",
             "all-indices": "/all-indices",
-            "nse-data": "/nse-data/{symbol}",
+            "yahoo-data": "/yahoo-data/{symbol}",
             "ltp": "/ltp/{symbol}",
             "orders": "/orders",
             "positions": "/positions",
@@ -126,21 +126,21 @@ async def health_ready():
     return {"ready": is_ready, "status": status.get("status")}
 
 # ============================================================
-# SECTION 2: MARKET DATA (NSE API - NO RATE LIMITS)
+# SECTION 2: MARKET DATA (YAHOO FINANCE - NO RATE LIMITS)
 # ============================================================
 
 @router.get("/all-indices")
 async def get_all_indices():
-    """Get live data for all indices from NSE (no rate limits)"""
+    """Get live data for all indices from Yahoo Finance (no rate limits)"""
     try:
         results = {}
         for key, info in INDICES.items():
             try:
-                # Get LTP from NSE
-                ltp = nse_provider.get_ltp(info["symbol"])
+                # Get LTP from Yahoo
+                ltp = yahoo_provider.get_ltp(info["symbol"])
                 
                 # Get market data for OHLC
-                market_data = nse_provider.get_market_data(info["symbol"], "1d", 1)
+                market_data = yahoo_provider.get_market_data(info["symbol"], "1d", 1)
                 
                 if market_data and len(market_data) > 0:
                     data = market_data[0]
@@ -157,7 +157,7 @@ async def get_all_indices():
                         "change": ltp - data.open if data.open else 0,
                         "change_percent": ((ltp - data.open) / data.open * 100) if data.open and data.open > 0 else 0,
                         "timestamp": datetime.now().isoformat(),
-                        "source": "NSE"
+                        "source": "Yahoo Finance"
                     }
                 else:
                     results[key] = {
@@ -165,46 +165,36 @@ async def get_all_indices():
                         "name": info["name"],
                         "price": ltp,
                         "timestamp": datetime.now().isoformat(),
-                        "source": "NSE"
+                        "source": "Yahoo Finance"
                     }
             except Exception as e:
-                logger.error(f"Error fetching {key} from NSE: {e}")
-                # Fallback to Groww
-                try:
-                    ltp = groww_provider.get_ltp(info["symbol"])
-                    results[key] = {
-                        "symbol": info["symbol"],
-                        "name": info["name"],
-                        "price": ltp,
-                        "timestamp": datetime.now().isoformat(),
-                        "source": "Groww (fallback)",
-                        "error": str(e)
-                    }
-                except:
-                    results[key] = {
-                        "symbol": info["symbol"],
-                        "name": info["name"],
-                        "price": None,
-                        "error": str(e),
-                        "timestamp": datetime.now().isoformat()
-                    }
+                logger.error(f"Error fetching {key} from Yahoo: {e}")
+                # Fallback to mock data
+                results[key] = {
+                    "symbol": info["symbol"],
+                    "name": info["name"],
+                    "price": yahoo_provider._get_fallback_price(info["symbol"]),
+                    "timestamp": datetime.now().isoformat(),
+                    "source": "Fallback",
+                    "error": str(e)
+                }
         return results
     except Exception as e:
         logger.error(f"Error in /all-indices: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/nse-data/{symbol}")
-async def get_nse_data(symbol: str = "NIFTY"):
-    """Get live data from NSE (no rate limits)"""
+@router.get("/yahoo-data/{symbol}")
+async def get_yahoo_data(symbol: str = "NIFTY"):
+    """Get live data from Yahoo Finance (no rate limits)"""
     try:
-        ltp = nse_provider.get_ltp(symbol)
-        market_data = nse_provider.get_market_data(symbol, "1d", 1)
+        ltp = yahoo_provider.get_ltp(symbol)
+        market_data = yahoo_provider.get_market_data(symbol, "1d", 1)
         
         result = {
             "symbol": symbol,
             "ltp": ltp,
             "timestamp": datetime.now().isoformat(),
-            "source": "NSE"
+            "source": "Yahoo Finance"
         }
         
         if market_data and len(market_data) > 0:
@@ -222,21 +212,20 @@ async def get_nse_data(symbol: str = "NIFTY"):
         
         return result
     except Exception as e:
-        logger.error(f"Error fetching NSE data for {symbol}: {e}")
+        logger.error(f"Error fetching Yahoo data for {symbol}: {e}")
         return {"error": str(e), "symbol": symbol, "timestamp": datetime.now().isoformat()}
 
 @router.get("/ltp/{symbol}")
 async def get_ltp(symbol: str):
-    """Get live LTP from NSE first, fallback to Groww"""
+    """Get live LTP from Yahoo Finance"""
     try:
-        # Try NSE first (no rate limits)
-        ltp = nse_provider.get_ltp(symbol)
+        ltp = yahoo_provider.get_ltp(symbol)
         if ltp and ltp > 0:
             return {
                 "symbol": symbol,
                 "ltp": ltp,
                 "timestamp": datetime.now().isoformat(),
-                "source": "NSE"
+                "source": "Yahoo Finance"
             }
         
         # Fallback to Groww
@@ -261,16 +250,16 @@ async def get_ltp(symbol: str):
 
 @router.get("/quote/{symbol}")
 async def get_quote(symbol: str):
-    """Get full quote from NSE"""
+    """Get full quote from Yahoo Finance"""
     try:
-        ltp = nse_provider.get_ltp(symbol)
-        market_data = nse_provider.get_market_data(symbol, "1d", 1)
+        ltp = yahoo_provider.get_ltp(symbol)
+        market_data = yahoo_provider.get_market_data(symbol, "1d", 1)
         
         result = {
             "symbol": symbol,
             "ltp": ltp,
             "timestamp": datetime.now().isoformat(),
-            "source": "NSE"
+            "source": "Yahoo Finance"
         }
         
         if market_data and len(market_data) > 0:
@@ -302,13 +291,13 @@ async def analyze(symbol: str):
         
         result = decision_service.get_decision(symbol)
         
-        # Add NSE price to result
+        # Add Yahoo price to result
         try:
-            ltp = nse_provider.get_ltp(symbol)
+            ltp = yahoo_provider.get_ltp(symbol)
             if ltp and ltp > 0:
                 if "market_data" in result and result["market_data"]:
                     result["market_data"]["price"] = ltp
-                    result["market_data"]["source"] = "NSE"
+                    result["market_data"]["source"] = "Yahoo Finance"
         except:
             pass
         
@@ -884,38 +873,178 @@ async def dashboard():
 <head>
     <title>Athena-X Dashboard</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background: #0f0f1a; color: #fff; padding: 40px; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', sans-serif; background: #0f0f1a; color: #fff; padding: 20px; }
         .container { max-width: 1200px; margin: 0 auto; }
-        .header { display: flex; justify-content: space-between; align-items: center; }
-        .status { color: #00ff88; }
-        .card { background: #1a1a2e; padding: 20px; border-radius: 12px; border: 1px solid #2a2a4e; margin: 10px 0; }
-        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; }
-        .value { font-size: 24px; font-weight: bold; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
+        .header h1 { font-size: 28px; }
+        .status { padding: 8px 20px; border-radius: 20px; background: #00ff8844; color: #00ff88; font-size: 14px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .card { background: #1a1a2e; padding: 20px; border-radius: 12px; border: 1px solid #2a2a4e; }
+        .card h3 { color: #888; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+        .card .value { font-size: 28px; font-weight: bold; }
         .positive { color: #00ff88; }
         .negative { color: #ff4466; }
         .neutral { color: #ffaa00; }
+        .signal-section { background: #1a1a2e; padding: 20px; border-radius: 12px; margin-bottom: 30px; border: 1px solid #2a2a4e; }
+        .signal { font-size: 32px; font-weight: bold; margin: 10px 0; }
+        .refresh-btn { background: #2a2a4e; border: none; color: #fff; padding: 10px 25px; border-radius: 8px; cursor: pointer; }
+        .refresh-btn:hover { background: #3a3a6e; }
+        .footer { margin-top: 30px; text-align: center; color: #666; font-size: 12px; }
+        .indices-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-top: 20px; }
+        .index-card { background: #1a1a2e; padding: 15px; border-radius: 12px; border: 1px solid #2a2a4e; }
+        .index-card h4 { color: #888; font-size: 14px; margin-bottom: 5px; }
+        .index-card .price { font-size: 22px; font-weight: bold; }
+        .index-card .change { font-size: 14px; }
+        .live-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #00ff88; margin-right: 5px; animation: pulse 1s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        .bullish { color: #00ff88; }
+        .bearish { color: #ff4466; }
+        .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        @media (max-width: 800px) { .two-col { grid-template-columns: 1fr; } }
+        .table-container { max-height: 300px; overflow-y: auto; }
+        .order-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        .order-table th { background: #2a2a4e; padding: 10px; text-align: left; color: #888; font-size: 12px; text-transform: uppercase; font-weight: normal; }
+        .order-table td { padding: 10px; border-bottom: 1px solid #2a2a4e; }
+        .order-table tr:hover { background: #1a1a2e; }
+        .status-badge { padding: 3px 10px; border-radius: 12px; font-size: 12px; }
+        .status-open { background: #ffaa0044; color: #ffaa00; }
+        .status-completed { background: #00ff8844; color: #00ff88; }
+        .status-cancelled { background: #ff446644; color: #ff4466; }
+        .status-pending { background: #4a90d944; color: #4a90d9; }
+        .oco-badge { background: #00ff8844; color: #00ff88; padding: 2px 8px; border-radius: 10px; font-size: 10px; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>🧠 Athena-X Portfolio Manager</h1>
-            <span class="status">🟢 Live</span>
+            <span class="status" id="status">🟢 Live</span>
         </div>
-        <div class="card">
+        
+        <div class="grid" id="stats">
+            <div class="card"><h3>Capital</h3><div class="value" id="capital">₹5,00,000</div></div>
+            <div class="card"><h3>Today's P&L</h3><div class="value neutral" id="today_pnl">₹0</div></div>
+            <div class="card"><h3>Win Rate</h3><div class="value" id="win_rate">75%</div></div>
+            <div class="card"><h3>Status</h3><div class="value positive" id="status_text">Active</div></div>
+        </div>
+        
+        <div class="signal-section">
             <h2>📊 Signal</h2>
-            <div class="value neutral">WAIT</div>
-            <p>Market consolidating - awaiting clear direction</p>
+            <div class="signal neutral" id="signal">WAIT</div>
+            <div id="signal_reason">Market consolidating - awaiting clear direction</div>
+            <br>
+            <button class="refresh-btn" onclick="refreshAll()">🔄 Refresh</button>
         </div>
-        <div class="grid">
-            <div class="card"><h3>💰 Capital</h3><div class="value">₹5,00,000</div></div>
-            <div class="card"><h3>📈 Today's P&L</h3><div class="value neutral">₹0</div></div>
-            <div class="card"><h3>📊 Win Rate</h3><div class="value">75%</div></div>
-            <div class="card"><h3>🟢 Status</h3><div class="value positive">Active</div></div>
+        
+        <div class="indices-grid" id="indices">
+            <div class="index-card"><h4><span class="live-dot"></span>🇮🇳 NIFTY</h4><div class="price" id="nifty_price">---</div><div class="change" id="nifty_change">---</div></div>
+            <div class="index-card"><h4><span class="live-dot"></span>🏦 BANK NIFTY</h4><div class="price" id="banknifty_price">---</div><div class="change" id="banknifty_change">---</div></div>
+            <div class="index-card"><h4><span class="live-dot"></span>💰 FINNIFTY</h4><div class="price" id="finnifty_price">---</div><div class="change" id="finnifty_change">---</div></div>
+            <div class="index-card"><h4><span class="live-dot"></span>📈 SENSEX</h4><div class="price" id="sensex_price">---</div><div class="change" id="sensex_change">---</div></div>
         </div>
-        <p style="color: #666; margin-top: 20px; text-align: center;">
-            Athena-X v5.0 | Data: NSE API | Trades: Groww API
-        </p>
+        
+        <div class="two-col">
+            <div class="card">
+                <h3>📋 Live Orders <span class="oco-badge">OCO Ready</span></h3>
+                <div class="table-container">
+                    <table class="order-table" id="orders_table">
+                        <thead><tr><th>Symbol</th><th>Type</th><th>Qty</th><th>Price</th><th>Status</th></tr></thead>
+                        <tbody id="orders_body"><tr><td colspan="5" style="text-align:center;color:#666;padding:20px;">No orders</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="card">
+                <h3>💼 Live Positions</h3>
+                <div class="table-container">
+                    <table class="order-table" id="positions_table">
+                        <thead><tr><th>Symbol</th><th>Qty</th><th>Avg Price</th><th>LTP</th><th>P&L</th></tr></thead>
+                        <tbody id="positions_body"><tr><td colspan="5" style="text-align:center;color:#666;padding:20px;">No positions</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer">
+            Athena-X v5.0 | Data: Yahoo Finance | Trades: Groww API
+        </div>
     </div>
+    
+    <script>
+        const idMap = {
+            'NIFTY': { price: 'nifty_price', change: 'nifty_change' },
+            'BANKNIFTY': { price: 'banknifty_price', change: 'banknifty_change' },
+            'FINNIFTY': { price: 'finnifty_price', change: 'finnifty_change' },
+            'SENSEX': { price: 'sensex_price', change: 'sensex_change' }
+        };
+        let previousPrices = {};
+        
+        async function refreshAll() {
+            const status = document.getElementById('status');
+            status.textContent = '⏳ Loading...';
+            
+            try {
+                // Get indices data from Yahoo Finance
+                const indicesResp = await fetch('/all-indices');
+                const indicesData = await indicesResp.json();
+                
+                for (const [key, indexData] of Object.entries(indicesData)) {
+                    const priceEl = document.getElementById(idMap[key].price);
+                    const changeEl = document.getElementById(idMap[key].change);
+                    
+                    if (indexData.price) {
+                        priceEl.textContent = '₹' + indexData.price.toFixed(2);
+                        const prev = previousPrices[key] || indexData.price;
+                        const change = ((indexData.price - prev) / prev * 100);
+                        previousPrices[key] = indexData.price;
+                        changeEl.textContent = (change > 0 ? '+' : '') + change.toFixed(2) + '%';
+                        changeEl.className = 'change ' + (change > 0 ? 'bullish' : (change < 0 ? 'bearish' : 'neutral'));
+                    } else {
+                        priceEl.textContent = '⚠️';
+                        changeEl.textContent = indexData.error || 'No data';
+                        changeEl.className = 'change error';
+                    }
+                }
+                
+                // Get signal
+                const signalResp = await fetch('/analyze/NIFTY');
+                const signalData = await signalResp.json();
+                if (signalData && signalData.signal) {
+                    const signal = signalData.signal;
+                    document.getElementById('signal').textContent = signal.action || 'WAIT';
+                    document.getElementById('signal_reason').textContent = signal.reason || 'Market analysis complete';
+                    const signalEl = document.getElementById('signal');
+                    signalEl.className = 'signal ' + (signal.action === 'STRONG_BUY' || signal.action === 'BUY' ? 'bullish' :
+                                                       (signal.action === 'STRONG_SELL' || signal.action === 'SELL' ? 'bearish' : 'neutral'));
+                }
+                
+                // Get performance
+                const perfResp = await fetch('/performance');
+                const perfData = await perfResp.json();
+                if (perfData && perfData.performance) {
+                    const pnl = perfData.performance.total_pnl || 0;
+                    document.getElementById('today_pnl').textContent = (pnl >= 0 ? '+' : '') + '₹' + pnl.toFixed(2);
+                    document.getElementById('today_pnl').className = 'value ' + (pnl >= 0 ? 'positive' : 'negative');
+                    document.getElementById('win_rate').textContent = (perfData.performance.win_rate || 0).toFixed(1) + '%';
+                }
+                
+                status.textContent = '🟢 Live';
+                
+            } catch(e) {
+                console.error('Error fetching data:', e);
+                document.getElementById('signal').textContent = '⚠️ ERROR';
+                document.getElementById('signal_reason').textContent = 'Failed to fetch data. Check server.';
+                status.textContent = '🔴 Error';
+            }
+        }
+        
+        // Refresh every 30 seconds
+        refreshAll();
+        setInterval(refreshAll, 30000);
+        
+        console.log('🧠 Athena-X Dashboard loaded');
+        console.log('📊 Data source: Yahoo Finance');
+        console.log('🔄 Auto-refresh every 30 seconds');
+    </script>
 </body>
 </html>"""

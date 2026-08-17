@@ -41,8 +41,9 @@ class RateLimiter:
         # Check if in cooldown
         if cls._cooldown_until and time.time() < cls._cooldown_until:
             wait_time = cls._cooldown_until - time.time()
-            logger.info(f"Rate limit cooldown: {wait_time:.0f}s remaining")
-            time.sleep(min(wait_time, 60))
+            if wait_time > 0:
+                logger.info(f"Rate limit cooldown: {wait_time:.0f}s remaining")
+                time.sleep(min(wait_time, 60))
             return
         
         now = datetime.now()
@@ -85,7 +86,10 @@ def rate_limited(func):
 # ============================================================
 
 class GrowwProvider:
+    """Groww provider using the official SDK with rate limit handling"""
+    
     def __init__(self):
+        # Singleton check
         if hasattr(self, '_initialized') and self._initialized:
             return
         
@@ -98,24 +102,7 @@ class GrowwProvider:
         self._use_mock = False
         self._cooldown_until = None
         
-        # Aggressive caching
-        self._cache = {}
-        self._cache_time = {}
-        self._cache_ttl = {
-            'quote': 60,
-            'ltp': 30,
-            'market_data': 300,
-            'option_chain': 600,
-            'orders': 30,
-            'positions': 30,
-            'margin': 300,
-            'profile': 600,
-        }
-        
-        self._last_known_price = {}
-        self._last_known_time = {}
-        
-        # Constants
+        # Correct constants from SDK
         self.EXCHANGE_NSE = GrowwAPI.EXCHANGE_NSE
         self.EXCHANGE_BSE = GrowwAPI.EXCHANGE_BSE
         self.EXCHANGE_MCX = GrowwAPI.EXCHANGE_MCX
@@ -147,12 +134,30 @@ class GrowwProvider:
         self.VALIDITY_IOC = GrowwAPI.VALIDITY_IOC
         self.VALIDITY_EOS = GrowwAPI.VALIDITY_EOS
         
+        # Symbol mapping
         self.SYMBOL_MAP = {
             "NIFTY": {"exchange": self.EXCHANGE_NSE, "segment": self.SEGMENT_CASH},
             "BANKNIFTY": {"exchange": self.EXCHANGE_NSE, "segment": self.SEGMENT_CASH},
             "FINNIFTY": {"exchange": self.EXCHANGE_NSE, "segment": self.SEGMENT_CASH},
             "SENSEX": {"exchange": self.EXCHANGE_BSE, "segment": self.SEGMENT_CASH},
         }
+        
+        # Aggressive caching
+        self._cache = {}
+        self._cache_time = {}
+        self._cache_ttl = {
+            'quote': 60,
+            'ltp': 30,
+            'market_data': 300,
+            'option_chain': 600,
+            'orders': 30,
+            'positions': 30,
+            'margin': 300,
+            'profile': 600,
+        }
+        
+        self._last_known_price = {}
+        self._last_known_time = {}
         
         # Try initial login
         self._login()
@@ -171,9 +176,10 @@ class GrowwProvider:
     
     def _login(self):
         """Authenticate with exponential backoff for rate limits"""
+        # Skip if already authenticated and token not expired
         if self.authenticated and self._auth_time:
             elapsed = time.time() - self._auth_time
-            if elapsed < 3600:
+            if elapsed < 3600:  # 1 hour session
                 return True
         
         # Check if in cooldown
@@ -206,14 +212,13 @@ class GrowwProvider:
             logger.error(f"Authentication failed: {error_msg}")
             self.authenticated = False
             self._client = None
+            self._use_mock = True
             
             if "rate limit" in error_msg.lower():
-                # Set cooldown for 10 minutes
-                self._cooldown_until = time.time() + 600
-                self._use_mock = True
+                self._cooldown_until = time.time() + 600  # 10 minutes
                 logger.info(f"Rate limit detected. Cooling down for 10 minutes")
             else:
-                self._use_mock = True
+                self._cooldown_until = None
             
             return False
     
@@ -225,8 +230,13 @@ class GrowwProvider:
                 raise Exception("Not authenticated - using mock mode")
         return self._client
     
+    # ============================================================
+    # MARKET DATA APIS (Now using Yahoo Finance, so these are fallback only)
+    # ============================================================
+    
     @rate_limited
     def get_quote(self, symbol: str = "NIFTY") -> Dict:
+        """Get live quote - fallback only"""
         if self._use_mock:
             return {"last_price": self._get_fallback_price(symbol), "is_mock": True}
         
@@ -260,7 +270,9 @@ class GrowwProvider:
             logger.error(f"Error fetching quote for {symbol}: {e}")
             return {"last_price": self._get_fallback_price(symbol), "is_mock": True}
     
+    @rate_limited
     def get_ltp(self, symbol: str = "NIFTY") -> float:
+        """Get last traded price - fallback only"""
         if self._use_mock:
             return self._get_fallback_price(symbol)
         
@@ -288,6 +300,7 @@ class GrowwProvider:
     
     @rate_limited
     def get_market_data(self, symbol: str = "NIFTY", timeframe: str = "5m", days: int = 5) -> List:
+        """Get historical market data - fallback only"""
         if self._use_mock:
             return []
         
@@ -338,6 +351,7 @@ class GrowwProvider:
             return []
     
     def get_option_chain(self, symbol: str = "NIFTY", expiry: datetime = None) -> OptionChainData:
+        """Get option chain data - fallback only"""
         if self._use_mock:
             return self._get_mock_option_chain(symbol)
         
@@ -373,6 +387,7 @@ class GrowwProvider:
             return self._get_mock_option_chain(symbol)
     
     def _parse_option_chain(self, data: Dict, symbol: str, expiry: datetime) -> OptionChainData:
+        """Parse option chain from SDK response"""
         try:
             strikes = []
             call_options = {}
@@ -453,28 +468,276 @@ class GrowwProvider:
             return self._get_mock_option_chain(symbol)
     
     # ============================================================
-    # MOCK DATA METHODS
+    # ORDER & POSITION APIS
     # ============================================================
     
+    @rate_limited
+    def get_order_list(self) -> List[Dict]:
+        """Get all orders"""
+        if self._use_mock:
+            return []
+        
+        cache_key = "orders"
+        cached = self._get_cache(cache_key, 'orders')
+        if cached:
+            return cached
+        
+        try:
+            response = self.client.get_order_list()
+            data = response.get("data", [])
+            self._set_cache(cache_key, data)
+            return data
+        except Exception as e:
+            logger.error(f"Error fetching orders: {e}")
+            return []
+    
+    @rate_limited
+    def get_positions_for_user(self) -> List[Dict]:
+        """Get all live positions"""
+        if self._use_mock:
+            return []
+        
+        cache_key = "positions"
+        cached = self._get_cache(cache_key, 'positions')
+        if cached:
+            return cached
+        
+        try:
+            response = self.client.get_positions_for_user()
+            data = response.get("data", [])
+            self._set_cache(cache_key, data)
+            return data
+        except Exception as e:
+            logger.error(f"Error fetching positions: {e}")
+            return []
+    
+    @rate_limited
+    def get_available_margin_details(self) -> Dict:
+        """Get available margin details"""
+        if self._use_mock:
+            return {}
+        
+        cache_key = "margin"
+        cached = self._get_cache(cache_key, 'margin')
+        if cached:
+            return cached
+        
+        try:
+            response = self.client.get_available_margin_details()
+            self._set_cache(cache_key, response)
+            return response
+        except Exception as e:
+            logger.error(f"Error fetching margin: {e}")
+            return {}
+    
+    @rate_limited
+    def get_user_profile(self) -> Dict:
+        """Get user profile"""
+        if self._use_mock:
+            return {}
+        
+        cache_key = "profile"
+        cached = self._get_cache(cache_key, 'profile')
+        if cached:
+            return cached
+        
+        try:
+            response = self.client.get_user_profile()
+            data = response.get("data", {})
+            self._set_cache(cache_key, data)
+            return data
+        except Exception as e:
+            logger.error(f"Error fetching profile: {e}")
+            return {}
+    
+    @rate_limited
+    def place_order(self, order_data: Dict) -> Dict:
+        """Place an order"""
+        if self._use_mock:
+            return {"error": "Mock mode - order not placed"}
+        
+        try:
+            if "exchange" not in order_data:
+                order_data["exchange"] = self.EXCHANGE_NSE
+            if "segment" not in order_data:
+                order_data["segment"] = self.SEGMENT_FNO
+            if "product" not in order_data:
+                order_data["product"] = self.PRODUCT_NRML
+            if "order_type" not in order_data:
+                order_data["order_type"] = self.ORDER_TYPE_LIMIT
+            
+            response = self.client.place_order(**order_data)
+            self._cache.pop("orders", None)  # Clear cache
+            return response
+        except Exception as e:
+            logger.error(f"Order failed: {e}")
+            return {"error": str(e)}
+    
+    @rate_limited
+    def cancel_order(self, order_id: str) -> Dict:
+        """Cancel an order"""
+        if self._use_mock:
+            return {"error": "Mock mode - order not cancelled"}
+        
+        try:
+            response = self.client.cancel_order(order_id)
+            self._cache.pop("orders", None)
+            return response
+        except Exception as e:
+            logger.error(f"Cancel order failed: {e}")
+            return {"error": str(e)}
+    
+    @rate_limited
+    def create_smart_order(self, order_data: Dict) -> Dict:
+        """Create a smart order (GTT/OCO)"""
+        if self._use_mock:
+            return {"error": "Mock mode - order not placed"}
+        
+        try:
+            if "exchange" not in order_data:
+                order_data["exchange"] = self.EXCHANGE_NSE
+            if "segment" not in order_data:
+                order_data["segment"] = self.SEGMENT_FNO
+            
+            response = self.client.create_smart_order(**order_data)
+            return response
+        except Exception as e:
+            logger.error(f"Smart order failed: {e}")
+            return {"error": str(e)}
+    
+    @rate_limited
+    def get_smart_order_list(self) -> List[Dict]:
+        """Get all smart orders"""
+        if self._use_mock:
+            return []
+        
+        cache_key = "smart_orders"
+        cached = self._get_cache(cache_key, 'orders')
+        if cached:
+            return cached
+        
+        try:
+            response = self.client.get_smart_order_list()
+            data = response.get("data", [])
+            self._set_cache(cache_key, data)
+            return data
+        except Exception as e:
+            logger.error(f"Error fetching smart orders: {e}")
+            return []
+    
+    @rate_limited
+    def get_smart_order(self, order_id: str) -> Dict:
+        """Get a specific smart order"""
+        if self._use_mock:
+            return {}
+        
+        try:
+            response = self.client.get_smart_order(order_id)
+            return response
+        except Exception as e:
+            logger.error(f"Error fetching smart order: {e}")
+            return {}
+    
+    @rate_limited
+    def modify_smart_order(self, order_id: str, **kwargs) -> Dict:
+        """Modify a smart order"""
+        if self._use_mock:
+            return {"error": "Mock mode - order not modified"}
+        
+        try:
+            response = self.client.modify_smart_order(order_id, **kwargs)
+            return response
+        except Exception as e:
+            logger.error(f"Modify smart order failed: {e}")
+            return {"error": str(e)}
+    
+    @rate_limited
+    def cancel_smart_order(self, order_id: str) -> Dict:
+        """Cancel a smart order"""
+        if self._use_mock:
+            return {"error": "Mock mode - order not cancelled"}
+        
+        try:
+            response = self.client.cancel_smart_order(order_id)
+            return response
+        except Exception as e:
+            logger.error(f"Cancel smart order failed: {e}")
+            return {"error": str(e)}
+    
+    # ============================================================
+    # WEBSOCKET METHODS
+    # ============================================================
+    
+    def get_websocket_url(self) -> str:
+        """Get WebSocket URL for real-time streaming"""
+        if self._use_mock:
+            return ""
+        
+        try:
+            token = self.generate_socket_token()
+            if token:
+                return f"wss://stream.groww.in/v1?token={token}"
+            return ""
+        except Exception as e:
+            logger.error(f"Error getting WebSocket URL: {e}")
+            return ""
+    
+    def generate_socket_token(self) -> str:
+        """Generate WebSocket token"""
+        if self._use_mock:
+            return ""
+        
+        try:
+            if not self.authenticated:
+                self._login()
+            
+            try:
+                response = self.client.generate_socket_token()
+            except TypeError:
+                try:
+                    response = self.client.generate_socket_token(key_pair=self.totp_token)
+                except:
+                    response = self.client.generate_socket_token({})
+            
+            if response and response.get("token"):
+                return response.get("token")
+            return ""
+        except Exception as e:
+            logger.error(f"Error generating socket token: {e}")
+            return ""
+    
+    # ============================================================
+    # UTILITY METHODS
+    # ============================================================
+    
+    def _get_fallback_price(self, symbol: str) -> float:
+        """Get fallback price for a symbol"""
+        fallback = {
+            "NIFTY": 24395.85,
+            "BANKNIFTY": 57491.10,
+            "FINNIFTY": 26213.65,
+            "SENSEX": 81000.00
+        }
+        return fallback.get(symbol, 24395.85)
+    
     def _get_mock_market_data(self, symbol: str) -> MarketData:
+        """Generate mock market data"""
         price = self._get_fallback_price(symbol)
         return MarketData(
             symbol=symbol,
-            market_type="NIFTY" if "NIFTY" in symbol else "BANK_NIFTY",
             timestamp=datetime.now(),
             open=price - 50,
             high=price + 50,
             low=price - 50,
             close=price,
             volume=1000000,
-            vwap=price - 20,
-            trend="Sideways",
-            prev_close=price - 50
+            vwap=price - 10
         )
     
     def _get_mock_option_chain(self, symbol: str) -> OptionChainData:
+        """Generate mock option chain"""
         current_price = self._get_fallback_price(symbol)
-        strikes = [current_price - 200, current_price - 100, current_price, 
+        strikes = [current_price - 200, current_price - 100, current_price,
                    current_price + 100, current_price + 200]
         expiry = datetime.now() + timedelta(days=7)
         
@@ -531,201 +794,20 @@ class GrowwProvider:
             underlying_price=current_price
         )
     
-    # ============================================================
-    # ORDER & POSITION APIS
-    # ============================================================
-    
-    @rate_limited
-    def get_order_list(self) -> List[Dict]:
-        if self._use_mock:
-            return []
-        
-        cache_key = "orders"
-        cached = self._get_cache(cache_key, 'orders')
-        if cached:
-            return cached
-        
-        try:
-            response = self.client.get_order_list()
-            data = response.get("data", [])
-            self._set_cache(cache_key, data)
-            return data
-        except Exception as e:
-            logger.error(f"Error fetching orders: {e}")
-            return []
-    
-    @rate_limited
-    def get_positions_for_user(self) -> List[Dict]:
-        if self._use_mock:
-            return []
-        
-        cache_key = "positions"
-        cached = self._get_cache(cache_key, 'positions')
-        if cached:
-            return cached
-        
-        try:
-            response = self.client.get_positions_for_user()
-            data = response.get("data", [])
-            self._set_cache(cache_key, data)
-            return data
-        except Exception as e:
-            logger.error(f"Error fetching positions: {e}")
-            return []
-    
-    @rate_limited
-    def get_available_margin_details(self) -> Dict:
-        if self._use_mock:
-            return {}
-        
-        cache_key = "margin"
-        cached = self._get_cache(cache_key, 'margin')
-        if cached:
-            return cached
-        
-        try:
-            response = self.client.get_available_margin_details()
-            self._set_cache(cache_key, response)
-            return response
-        except Exception as e:
-            logger.error(f"Error fetching margin: {e}")
-            return {}
-    
-    @rate_limited
-    def get_user_profile(self) -> Dict:
-        if self._use_mock:
-            return {}
-        
-        cache_key = "profile"
-        cached = self._get_cache(cache_key, 'profile')
-        if cached:
-            return cached
-        
-        try:
-            response = self.client.get_user_profile()
-            data = response.get("data", {})
-            self._set_cache(cache_key, data)
-            return data
-        except Exception as e:
-            logger.error(f"Error fetching profile: {e}")
-            return {}
-    
-    @rate_limited
-    def place_order(self, order_data: Dict) -> Dict:
-        if self._use_mock:
-            return {"error": "Mock mode - order not placed"}
-        
-        try:
-            if "exchange" not in order_data:
-                order_data["exchange"] = self.EXCHANGE_NSE
-            if "segment" not in order_data:
-                order_data["segment"] = self.SEGMENT_FNO
-            if "product" not in order_data:
-                order_data["product"] = self.PRODUCT_NRML
-            if "order_type" not in order_data:
-                order_data["order_type"] = self.ORDER_TYPE_LIMIT
-            
-            response = self.client.place_order(**order_data)
-            self._cache.pop("orders", None)
-            return response
-        except Exception as e:
-            logger.error(f"Order failed: {e}")
-            return {"error": str(e)}
-    
-    @rate_limited
-    def create_smart_order(self, order_data: Dict) -> Dict:
-        if self._use_mock:
-            return {"error": "Mock mode - order not placed"}
-        
-        try:
-            if "exchange" not in order_data:
-                order_data["exchange"] = self.EXCHANGE_NSE
-            if "segment" not in order_data:
-                order_data["segment"] = self.SEGMENT_FNO
-            
-            response = self.client.create_smart_order(**order_data)
-            return response
-        except Exception as e:
-            logger.error(f"Smart order failed: {e}")
-            return {"error": str(e)}
-    
-    @rate_limited
-    def get_smart_order_list(self) -> List[Dict]:
-        if self._use_mock:
-            return []
-        
-        cache_key = "smart_orders"
-        cached = self._get_cache(cache_key, 'orders')
-        if cached:
-            return cached
-        
-        try:
-            response = self.client.get_smart_order_list()
-            data = response.get("data", [])
-            self._set_cache(cache_key, data)
-            return data
-        except Exception as e:
-            logger.error(f"Error fetching smart orders: {e}")
-            return []
-    
-    @rate_limited
-    def cancel_order(self, order_id: str) -> Dict:
-        if self._use_mock:
-            return {"error": "Mock mode - order not cancelled"}
-        
-        try:
-            response = self.client.cancel_order(order_id)
-            self._cache.pop("orders", None)
-            return response
-        except Exception as e:
-            logger.error(f"Cancel order failed: {e}")
-            return {"error": str(e)}
-    
-    # ============================================================
-    # WEBSOCKET METHODS
-    # ============================================================
-    
-    def get_websocket_url(self) -> str:
-        if self._use_mock:
-            return ""
-        
-        try:
-            token = self.generate_socket_token()
-            if token:
-                return f"wss://stream.groww.in/v1?token={token}"
-            return ""
-        except Exception as e:
-            logger.error(f"Error getting WebSocket URL: {e}")
-            return ""
-    
-    def generate_socket_token(self) -> str:
-        if self._use_mock:
-            return ""
-        
-        try:
-            if not self.authenticated:
-                self._login()
-            
-            try:
-                response = self.client.generate_socket_token()
-            except TypeError:
-                try:
-                    response = self.client.generate_socket_token(key_pair=self.totp_token)
-                except:
-                    response = self.client.generate_socket_token({})
-            
-            if response and response.get("token"):
-                return response.get("token")
-            return ""
-        except Exception as e:
-            logger.error(f"Error generating socket token: {e}")
-            return ""
-    
-    def _get_fallback_price(self, symbol: str) -> float:
-        fallback = {
-            "NIFTY": 24395.85,
-            "BANKNIFTY": 57491.10,
-            "FINNIFTY": 26213.65,
-            "SENSEX": 81000.00
+    def get_auth_status(self) -> Dict:
+        """Get authentication status"""
+        return {
+            "authenticated": self.authenticated,
+            "use_mock": self._use_mock,
+            "cooldown_until": self._cooldown_until,
+            "auth_time": self._auth_time,
+            "session_token": self._client is not None
         }
-        return fallback.get(symbol, 24395.85)
+    
+    def reset_auth(self):
+        """Reset authentication"""
+        self._client = None
+        self.authenticated = False
+        self._use_mock = False
+        self._cooldown_until = None
+        logger.info("Auth reset - will retry on next request")

@@ -52,33 +52,33 @@ app.include_router(router)
 @app.on_event("startup")
 async def startup_event():
     """Start WebSocket connection on boot"""
-    logger.info("🚀 Athena-X starting up...")
+    logger.info("Athena-X starting up...")
     
     # Start error recovery
     error_recovery.start()
-    logger.info("✅ Error recovery started")
+    logger.info("Error recovery started")
     
     # Start WebSocket
     try:
         await websocket_manager.connect_groww_websocket()
-        logger.info("✅ WebSocket streaming started")
+        logger.info("WebSocket streaming started")
     except Exception as e:
-        logger.warning(f"⚠️ WebSocket startup error: {e}")
+        logger.warning(f"WebSocket startup error: {e}")
     
     # Train ML model in background
     try:
-        logger.info("🧠 Training ML model...")
+        logger.info("Training ML model...")
         asyncio.create_task(train_ml_model())
     except Exception as e:
-        logger.warning(f"⚠️ ML training startup error: {e}")
+        logger.warning(f"ML training startup error: {e}")
 
 async def train_ml_model():
     """Train ML model in background"""
     try:
         ml_predictor.train("NIFTY")
-        logger.info("✅ ML model trained successfully")
+        logger.info("ML model trained successfully")
     except Exception as e:
-        logger.warning(f"⚠️ ML training failed: {e}")
+        logger.warning(f"ML training failed: {e}")
 
 # ============================================================
 # WEBSOCKET ENDPOINT
@@ -164,11 +164,11 @@ async def dashboard():
         <html>
             <head><title>Athena-X</title></head>
             <body style="font-family: Arial; background: #0f0f1a; color: #fff; padding: 40px;">
-                <h1>🧠 Athena-X Dashboard</h1>
-                <p>✅ System is running!</p>
-                <p>📍 Environment: <strong>Railway</strong></p>
-                <p>📚 <a href="/docs" style="color: #00ff88;">API Documentation</a></p>
-                <p>🔍 <a href="/health" style="color: #ffaa00;">Health Check</a></p>
+                <h1>Athena-X Dashboard</h1>
+                <p>System is running!</p>
+                <p>Environment: <strong>Railway</strong></p>
+                <p><a href="/docs" style="color: #00ff88;">API Documentation</a></p>
+                <p><a href="/health" style="color: #ffaa00;">Health Check</a></p>
                 <hr style="border-color: #2a2a4e;">
                 <p style="color: #666;">Athena-X v5.0 | Fully Automated Trading Engine</p>
             </body>

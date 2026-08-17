@@ -1,24 +1,17 @@
 # run.py - Main Entry Point
-import os
-import sys
-import signal
+import uvicorn
+import webbrowser
 import threading
 import time
-import webbrowser
+import os
+import sys
 import logging
-import uvicorn
-
-# ============================================================
-# SUPPRESS TENSORFLOW WARNINGS
-# ============================================================
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
-os.environ['TF_CPP_MIN_VLOG_LEVEL'] = '3'
+import signal
 
 # Add current directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Configure logging
+# Configure logging first
 from backend.app.services.logger import setup_logging
 logger = setup_logging()
 
@@ -198,71 +191,44 @@ if __name__ == "__main__":
     print("="*60)
     print("ATHENA-X PORTFOLIO MANAGER")
     print("="*60)
-    
-    # Check if running on Railway
-    is_railway = os.environ.get('RAILWAY_ENVIRONMENT') is not None
-    
-    if is_railway:
-        print(f"Server: http://0.0.0.0:{os.environ.get('PORT', 8000)}")
-        print(f"Dashboard: https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'your-project')}.up.railway.app/dashboard")
-        print(f"API Docs: https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'your-project')}.up.railway.app/docs")
-    else:
-        print(f"Server: http://localhost:8000")
-        print(f"Dashboard: http://localhost:8000/dashboard")
-        print(f"API Docs: http://localhost:8000/docs")
-    
+    print(f"Server: http://localhost:8000")
+    print(f"Dashboard: http://localhost:8000/dashboard")
+    print(f"API Docs: http://localhost:8000/docs")
     print("="*60)
     
     show_features()
     
     print("Press Ctrl+C to stop\n")
     
-    # Show real account info
     show_account_info()
     
-    # Start all services
     services = start_services()
-    
-    # Start system monitor
     monitor = start_monitor()
-    
-    # Start alert service
     alert = start_alert_service()
-    
-    # Start auto-trade scheduler
     scheduler = start_scheduler()
-    
-    # Start auto-close service
     auto_close = start_auto_close_service()
     
-    # Print status
     print("\n" + "="*60)
     print("SYSTEM STATUS")
     print("="*60)
-    print(f"  Auto-Trade Scheduler: {'[OK] Running' if scheduler else '[ERROR] Disabled'}")
-    print(f"  Auto-Close Service: {'[OK] Running' if auto_close else '[ERROR] Disabled'}")
-    print(f"  System Monitor: {'[OK] Running' if monitor else '[ERROR] Disabled'}")
-    print(f"  Alert Service: {'[OK] Active' if alert else '[ERROR] Disabled'}")
-    print(f"  Error Recovery: {'[OK] Active' if services.get('recovery') else '[ERROR] Disabled'}")
-    print(f"  ML Predictor: {'[OK] Active' if services.get('ml') else '[ERROR] Disabled'}")
-    print(f"  Backtest Engine: {'[OK] Active' if services.get('backtest') else '[ERROR] Disabled'}")
-    print(f"  WebSocket: {'[OK] Active' if services.get('ws_manager') else '[ERROR] Disabled'}")
+    print(f" Auto-Trade Scheduler: {'[OK] Running' if scheduler else '[ERROR] Disabled'}")
+    print(f" Auto-Close Service: {'[OK] Running' if auto_close else '[ERROR] Disabled'}")
+    print(f" System Monitor: {'[OK] Running' if monitor else '[ERROR] Disabled'}")
+    print(f" Alert Service: {'[OK] Active' if alert else '[ERROR] Disabled'}")
+    print(f" Error Recovery: {'[OK] Active' if services.get('recovery') else '[ERROR] Disabled'}")
+    print(f" ML Predictor: {'[OK] Active' if services.get('ml') else '[ERROR] Disabled'}")
+    print(f" Backtest Engine: {'[OK] Active' if services.get('backtest') else '[ERROR] Disabled'}")
+    print(f" WebSocket: {'[OK] Active' if services.get('ws_manager') else '[ERROR] Disabled'}")
     print("="*60 + "\n")
     
-    # Open browser (only if running locally)
-    if not is_railway:
-        threading.Thread(target=open_browser, daemon=True).start()
+    threading.Thread(target=open_browser, daemon=True).start()
     
-    # Run server
     try:
-        port = int(os.environ.get('PORT', 8000))
-        host = "0.0.0.0" if is_railway else "127.0.0.1"
-        
         uvicorn.run(
             "backend.app.main:app",
-            host=host,
-            port=port,
-            reload=not is_railway,
+            host="127.0.0.1",
+            port=8000,
+            reload=True,
             log_level="info"
         )
     except KeyboardInterrupt:
