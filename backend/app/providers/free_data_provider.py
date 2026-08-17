@@ -76,6 +76,22 @@ class FreeDataProvider:
             logger.error(f"Error fetching market data for {symbol}: {e}")
             return []
     
+    def get_all_indices_data(self) -> dict:
+        """Get data for all indices at once"""
+        result = {}
+        for symbol in self.symbol_map.keys():
+            try:
+                ltp = self.get_ltp(symbol)
+                if ltp:
+                    result[symbol] = {
+                        "symbol": symbol,
+                        "price": ltp,
+                        "timestamp": datetime.now().isoformat()
+                    }
+            except Exception as e:
+                logger.error(f"Error fetching {symbol}: {e}")
+        return result
+    
     def clear_cache(self):
         """Clear the cache"""
         self._cache.clear()
