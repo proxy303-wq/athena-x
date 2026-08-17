@@ -27,7 +27,7 @@ health_service = HealthService()
 validator = DataValidator()
 ml_predictor = MLPredictor()
 backtest_engine = BacktestEngine()
-free_provider = FreeDataProvider()
+free_provider = FreeDataProvider()  # ✅ FREE data provider
 
 # Define all indices
 INDICES = {
@@ -79,16 +79,20 @@ async def health_ready():
 
 @router.get("/all-indices")
 async def get_all_indices():
-    """Get live data for all indices from FREE provider (yfinance)"""
+    """
+    Get live data for all indices from FREE provider (yfinance)
+    This has NO rate limits!
+    """
     try:
         results = {}
         for key, info in INDICES.items():
             try:
-                # Get LTP from free provider (yfinance)
+                # ✅ Use FREE provider for live data
                 ltp = free_provider.get_ltp(info["symbol"])
                 
+                # If free provider fails, try Groww as fallback
                 if ltp is None or ltp <= 0:
-                    # Fallback to Groww if free data fails
+                    logger.warning(f"Free data failed for {key}, using Groww fallback")
                     try:
                         ltp = groww_provider.get_ltp(info["symbol"])
                     except:
@@ -113,28 +117,59 @@ async def get_all_indices():
                 }
         return results
     except Exception as e:
+        logger.error(f"Error in /all-indices: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/ltp/{symbol}")
 async def get_ltp(symbol: str):
     """Get live LTP from FREE provider"""
     try:
-        # Get from free provider first
+        # ✅ Use FREE provider
         ltp = free_provider.get_ltp(symbol)
         
+        # Fallback to Groww if free provider fails
         if ltp is None or ltp <= 0:
-            # Fallback to Groww
             try:
                 ltp = groww_provider.get_ltp(symbol)
             except:
                 ltp = None
         
         if ltp is None or ltp <= 0:
-            return {"symbol": symbol, "ltp": None, "error": "Invalid price", "timestamp": datetime.now().isoformat()}
+            return {
+                "symbol": symbol, 
+                "ltp": None, 
+                "error": "Invalid price", 
+                "timestamp": datetime.now().isoformat()
+            }
         
-        return {"symbol": symbol, "ltp": ltp, "timestamp": datetime.now().isoformat()}
+        return {
+            "symbol": symbol, 
+            "ltp": ltp, 
+            "timestamp": datetime.now().isoformat()
+        }
     except Exception as e:
+        logger.error(f"Error fetching LTP for {symbol}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/test-yfinance")
+async def test_yfinance():
+    """Test if yfinance is working"""
+    try:
+        import yfinance as yf
+        stock = yf.Ticker("^NSEI")
+        data = stock.history(period="1d")
+        return {
+            "yfinance_installed": True,
+            "data_available": not data.empty,
+            "latest_close": float(data['Close'].iloc[-1]) if not data.empty else None,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "yfinance_installed": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
 
 # ============================================================
 # ANALYZE & DECISION
@@ -148,7 +183,11 @@ async def analyze(symbol: str):
         return result
     except Exception as e:
         logger.error(f"Error analyzing {symbol}: {e}")
-        return {"symbol": symbol, "signal": {"action": "ERROR", "reason": str(e)}}
+        return {
+            "symbol": symbol, 
+            "signal": {"action": "ERROR", "reason": str(e)},
+            "timestamp": datetime.now().isoformat()
+        }
 
 @router.post("/execute/{symbol}")
 async def execute_trade(symbol: str):
@@ -241,7 +280,10 @@ async def get_performance():
     """Get trade performance"""
     try:
         performance = order_service.get_trade_performance()
-        return {"performance": performance, "timestamp": datetime.now().isoformat()}
+        return {
+            "performance": performance, 
+            "timestamp": datetime.now().isoformat()
+        }
     except Exception as e:
         return {"performance": {}, "error": str(e)}
 
