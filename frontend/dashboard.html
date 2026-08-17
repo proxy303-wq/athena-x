@@ -79,11 +79,6 @@
         .trade-log { max-height: 200px; overflow-y: auto; font-size: 12px; color: #aaa; }
         .trade-log .win { color: #00ff88; }
         .trade-log .loss { color: #ff4466; }
-        
-        .risk-bar { width: 100%; height: 6px; background: #2a2a4e; border-radius: 3px; margin-top: 8px; }
-        .risk-fill { height: 100%; border-radius: 3px; background: #00ff88; }
-        .risk-fill.warning { background: #ffaa00; }
-        .risk-fill.danger { background: #ff4466; }
     </style>
 </head>
 <body>
@@ -202,7 +197,6 @@
             'SENSEX': { price: 'sensex_price', change: 'sensex_change' }
         };
         let previousPrices = {};
-        let refreshTimer = null;
         
         // ============================================================
         // MAIN REFRESH FUNCTION
@@ -238,25 +232,29 @@
         // ============================================================
         
         async function refreshIndices() {
-            const resp = await fetch('/all-indices');
-            const data = await resp.json();
-            
-            for (const [key, indexData] of Object.entries(data)) {
-                const priceEl = document.getElementById(idMap[key].price);
-                const changeEl = document.getElementById(idMap[key].change);
+            try {
+                const resp = await fetch('/all-indices');
+                const data = await resp.json();
                 
-                if (indexData.price) {
-                    priceEl.textContent = '₹' + indexData.price.toFixed(2);
-                    const prev = previousPrices[key] || indexData.price;
-                    const change = ((indexData.price - prev) / prev * 100);
-                    previousPrices[key] = indexData.price;
-                    changeEl.textContent = (change > 0 ? '+' : '') + change.toFixed(2) + '%';
-                    changeEl.className = 'change ' + (change > 0 ? 'bullish' : (change < 0 ? 'bearish' : 'neutral'));
-                } else {
-                    priceEl.textContent = '⚠️';
-                    changeEl.textContent = indexData.error || 'No data';
-                    changeEl.className = 'change error';
+                for (const [key, indexData] of Object.entries(data)) {
+                    const priceEl = document.getElementById(idMap[key].price);
+                    const changeEl = document.getElementById(idMap[key].change);
+                    
+                    if (indexData.price && indexData.price > 0) {
+                        priceEl.textContent = '₹' + indexData.price.toFixed(2);
+                        const prev = previousPrices[key] || indexData.price;
+                        const change = ((indexData.price - prev) / prev * 100);
+                        previousPrices[key] = indexData.price;
+                        changeEl.textContent = (change > 0 ? '+' : '') + change.toFixed(2) + '%';
+                        changeEl.className = 'change ' + (change > 0 ? 'bullish' : (change < 0 ? 'bearish' : 'neutral'));
+                    } else {
+                        priceEl.textContent = '⚠️';
+                        changeEl.textContent = indexData.error || 'No data';
+                        changeEl.className = 'change error';
+                    }
                 }
+            } catch(e) {
+                console.error('Indices error:', e);
             }
         }
         
@@ -265,21 +263,25 @@
         // ============================================================
         
         async function refreshSignal() {
-            const resp = await fetch('/analyze/NIFTY');
-            const data = await resp.json();
-            
-            if (data && data.signal) {
-                const signal = data.signal;
-                document.getElementById('signal').textContent = signal.action || 'WAIT';
-                document.getElementById('signal_reason').textContent = signal.reason || 'Market analysis complete';
-                document.getElementById('signal_confidence').textContent = (signal.confidence || 0).toFixed(1) + '%';
-                document.getElementById('signal_score').textContent = (signal.score || 0).toFixed(3);
-                document.getElementById('signal_risk').textContent = data.decision?.risk_level || 'HIGH';
-                document.getElementById('signal_time').textContent = new Date().toLocaleTimeString();
+            try {
+                const resp = await fetch('/analyze/NIFTY');
+                const data = await resp.json();
                 
-                const signalEl = document.getElementById('signal');
-                signalEl.className = 'signal ' + (signal.action === 'STRONG_BUY' || signal.action === 'BUY' ? 'bullish' : 
-                                                   (signal.action === 'STRONG_SELL' || signal.action === 'SELL' ? 'bearish' : 'neutral'));
+                if (data && data.signal) {
+                    const signal = data.signal;
+                    document.getElementById('signal').textContent = signal.action || 'WAIT';
+                    document.getElementById('signal_reason').textContent = signal.reason || 'Market analysis complete';
+                    document.getElementById('signal_confidence').textContent = (signal.confidence || 0).toFixed(1) + '%';
+                    document.getElementById('signal_score').textContent = (signal.score || 0).toFixed(3);
+                    document.getElementById('signal_risk').textContent = data.decision?.risk_level || 'HIGH';
+                    document.getElementById('signal_time').textContent = new Date().toLocaleTimeString();
+                    
+                    const signalEl = document.getElementById('signal');
+                    signalEl.className = 'signal ' + (signal.action === 'STRONG_BUY' || signal.action === 'BUY' ? 'bullish' : 
+                                                       (signal.action === 'STRONG_SELL' || signal.action === 'SELL' ? 'bearish' : 'neutral'));
+                }
+            } catch(e) {
+                console.error('Signal error:', e);
             }
         }
         
@@ -288,25 +290,29 @@
         // ============================================================
         
         async function refreshOrders() {
-            const resp = await fetch('/orders');
-            const data = await resp.json();
-            const orders = data.orders || [];
-            const tbody = document.getElementById('orders_body');
-            
-            if (orders.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#666;padding:20px;">No orders</td></tr>';
-                return;
+            try {
+                const resp = await fetch('/orders');
+                const data = await resp.json();
+                const orders = data.orders || [];
+                const tbody = document.getElementById('orders_body');
+                
+                if (orders.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#666;padding:20px;">No orders</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = orders.slice(0, 10).map(order => `
+                    <tr>
+                        <td>${order.trading_symbol || 'N/A'}</td>
+                        <td>${order.transaction_type || 'N/A'}</td>
+                        <td>${order.quantity || 0}</td>
+                        <td>₹${order.price || 0}</td>
+                        <td><span class="status-badge status-${(order.status || 'OPEN').toLowerCase()}">${order.status || 'OPEN'}</span></td>
+                    </tr>
+                `).join('');
+            } catch(e) {
+                console.error('Orders error:', e);
             }
-            
-            tbody.innerHTML = orders.slice(0, 10).map(order => `
-                <tr>
-                    <td>${order.trading_symbol || 'N/A'}</td>
-                    <td>${order.transaction_type || 'N/A'}</td>
-                    <td>${order.quantity || 0}</td>
-                    <td>₹${order.price || 0}</td>
-                    <td><span class="status-badge status-${(order.status || 'OPEN').toLowerCase()}">${order.status || 'OPEN'}</span></td>
-                </tr>
-            `).join('');
         }
         
         // ============================================================
@@ -314,27 +320,31 @@
         // ============================================================
         
         async function refreshPositions() {
-            const resp = await fetch('/positions');
-            const data = await resp.json();
-            const positions = data.positions || [];
-            const tbody = document.getElementById('positions_body');
-            
-            if (positions.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#666;padding:20px;">No positions</td></tr>';
-                return;
+            try {
+                const resp = await fetch('/positions');
+                const data = await resp.json();
+                const positions = data.positions || [];
+                const tbody = document.getElementById('positions_body');
+                
+                if (positions.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#666;padding:20px;">No positions</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = positions.slice(0, 10).map(pos => {
+                    const pnl = pos.unrealized_pnl || 0;
+                    return `
+                    <tr>
+                        <td>${pos.trading_symbol || 'N/A'}</td>
+                        <td>${pos.quantity || 0}</td>
+                        <td>₹${pos.average_price || 0}</td>
+                        <td>₹${pos.ltp || 0}</td>
+                        <td class="${pnl >= 0 ? 'positive' : 'negative'}">${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}</td>
+                    </tr>
+                `}).join('');
+            } catch(e) {
+                console.error('Positions error:', e);
             }
-            
-            tbody.innerHTML = positions.slice(0, 10).map(pos => {
-                const pnl = pos.unrealized_pnl || 0;
-                return `
-                <tr>
-                    <td>${pos.trading_symbol || 'N/A'}</td>
-                    <td>${pos.quantity || 0}</td>
-                    <td>₹${pos.average_price || 0}</td>
-                    <td>₹${pos.ltp || 0}</td>
-                    <td class="${pnl >= 0 ? 'positive' : 'negative'}">${pnl >= 0 ? '+' : ''}₹${pnl.toFixed(2)}</td>
-                </tr>
-            `}).join('');
         }
         
         // ============================================================
@@ -342,22 +352,26 @@
         // ============================================================
         
         async function refreshPerformance() {
-            const resp = await fetch('/performance');
-            const data = await resp.json();
-            const perf = data.performance || {};
-            
-            const pnl = perf.total_pnl || 0;
-            const wins = perf.winning_trades || 0;
-            const losses = perf.losing_trades || 0;
-            const total = perf.total_trades || 0;
-            const winRate = total > 0 ? (wins / total * 100) : 0;
-            
-            document.getElementById('today_pnl').textContent = (pnl >= 0 ? '+' : '') + '₹' + pnl.toFixed(2);
-            document.getElementById('today_pnl').className = 'value ' + (pnl >= 0 ? 'positive' : 'negative');
-            document.getElementById('win_rate').textContent = winRate.toFixed(1) + '%';
-            document.getElementById('win_detail').textContent = wins + ' wins / ' + losses + ' losses';
-            document.getElementById('positions_count').textContent = total;
-            document.getElementById('positions_detail').textContent = total + ' total trades';
+            try {
+                const resp = await fetch('/performance');
+                const data = await resp.json();
+                const perf = data.performance || {};
+                
+                const pnl = perf.total_pnl || 0;
+                const wins = perf.winning_trades || 0;
+                const losses = perf.losing_trades || 0;
+                const total = perf.total_trades || 0;
+                const winRate = total > 0 ? (wins / total * 100) : 0;
+                
+                document.getElementById('today_pnl').textContent = (pnl >= 0 ? '+' : '') + '₹' + pnl.toFixed(2);
+                document.getElementById('today_pnl').className = 'value ' + (pnl >= 0 ? 'positive' : 'negative');
+                document.getElementById('win_rate').textContent = winRate.toFixed(1) + '%';
+                document.getElementById('win_detail').textContent = wins + ' wins / ' + losses + ' losses';
+                document.getElementById('positions_count').textContent = total;
+                document.getElementById('positions_detail').textContent = total + ' total trades';
+            } catch(e) {
+                console.error('Performance error:', e);
+            }
         }
         
         // ============================================================
@@ -365,26 +379,30 @@
         // ============================================================
         
         async function refreshSmartOrders() {
-            const resp = await fetch('/smart/orders');
-            const data = await resp.json();
-            const orders = data.orders || [];
-            const tbody = document.getElementById('smart_body');
-            
-            if (orders.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;padding:20px;">No smart orders</td></tr>';
-                return;
+            try {
+                const resp = await fetch('/smart/orders');
+                const data = await resp.json();
+                const orders = data.orders || [];
+                const tbody = document.getElementById('smart_body');
+                
+                if (orders.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;padding:20px;">No smart orders</td></tr>';
+                    return;
+                }
+                
+                tbody.innerHTML = orders.slice(0, 10).map(order => `
+                    <tr>
+                        <td>${order.trading_symbol || 'N/A'}</td>
+                        <td>${order.order_type || 'N/A'}</td>
+                        <td>₹${order.trigger_price || 0}</td>
+                        <td>₹${order.target_price || 0}</td>
+                        <td>₹${order.stop_loss || 0}</td>
+                        <td><span class="status-badge status-${(order.status || 'ACTIVE').toLowerCase()}">${order.status || 'ACTIVE'}</span></td>
+                    </tr>
+                `).join('');
+            } catch(e) {
+                console.error('Smart orders error:', e);
             }
-            
-            tbody.innerHTML = orders.slice(0, 10).map(order => `
-                <tr>
-                    <td>${order.trading_symbol || 'N/A'}</td>
-                    <td>${order.order_type || 'N/A'}</td>
-                    <td>₹${order.trigger_price || 0}</td>
-                    <td>₹${order.target_price || 0}</td>
-                    <td>₹${order.stop_loss || 0}</td>
-                    <td><span class="status-badge status-${(order.status || 'ACTIVE').toLowerCase()}">${order.status || 'ACTIVE'}</span></td>
-                </tr>
-            `).join('');
         }
         
         // ============================================================
