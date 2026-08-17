@@ -1,6 +1,7 @@
 # backend/app/providers/yfinance_provider.py
 import yfinance as yf
 import logging
+import requests
 from datetime import datetime, timedelta
 from typing import List, Optional, Dict, Any
 from ..core.models import MarketData, OptionChainData, OptionData, OptionType
@@ -8,7 +9,7 @@ from ..core.models import MarketData, OptionChainData, OptionData, OptionType
 logger = logging.getLogger(__name__)
 
 class YahooFinanceProvider:
-    """Yahoo Finance - Free, reliable, no rate limits"""
+    """Yahoo Finance with NSE API fallback"""
     
     def __init__(self):
         self.symbol_map = {
@@ -19,16 +20,27 @@ class YahooFinanceProvider:
         }
         self._cache = {}
         self._cache_time = {}
-        self._cache_ttl = 30
+        self._cache_ttl = 60  # Increased to 60 seconds
+        self._use_nse_fallback = False
+        
+        # NSE session
+        self.nse_session = requests.Session()
+        self.nse_session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Referer': 'https://www.nseindia.com/'
+        })
     
     def get_ltp(self, symbol: str = "NIFTY") -> float:
-        """Get live price from Yahoo Finance"""
+        """Get live price from Yahoo Finance with NSE fallback"""
         cache_key = f"ltp_{symbol}"
         if cache_key in self._cache and self._cache_time.get(cache_key):
             age = (datetime.now() - self._cache_time[cache_key]).total_seconds()
             if age < self._cache_ttl:
                 return self._cache[cache_key]
         
+        # Try Yahoo first
         try:
             ticker = self.symbol_map.get(symbol, symbol)
             stock = yf.Ticker(ticker)
@@ -38,12 +50,49 @@ class YahooFinanceProvider:
                 ltp = float(data['Close'].iloc[-1])
                 self._cache[cache_key] = ltp
                 self._cache_time[cache_key] = datetime.now()
+                logger.info(f"Yahoo LTP for {symbol}: {ltp}")
                 return ltp
-            
-            return self._get_fallback_price(symbol)
         except Exception as e:
-            logger.error(f"Error fetching LTP from Yahoo: {e}")
-            return self._get_fallback_price(symbol)
+            logger.warning(f"Yahoo failed for {symbol}: {e}")
+        
+        # Fallback to NSE API
+        try:
+            logger.info(f"Trying NSE fallback for {symbol}")
+            ltp = self._get_nse_ltp(symbol)
+            if ltp and ltp > 0:
+                self._cache[cache_key] = ltp
+                self._cache_time[cache_key] = datetime.now()
+                logger.info(f"NSE fallback LTP for {symbol}: {ltp}")
+                return ltp
+        except Exception as e:
+            logger.warning(f"NSE fallback failed: {e}")
+        
+        # Final fallback
+        return self._get_fallback_price(symbol)
+    
+    def _get_nse_ltp(self, symbol: str) -> float:
+        """Get LTP from NSE API"""
+        try:
+            indices = {
+                "NIFTY": "NIFTY 50",
+                "BANKNIFTY": "NIFTY BANK"
+            }
+            
+            # Get fresh session
+            self.nse_session.get('https://www.nseindia.com', timeout=10)
+            
+            url = "https://www.nseindia.com/api/equity-stockIndices"
+            response = self.nse_session.get(url, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                for index in data.get('data', []):
+                    if indices.get(symbol) == index.get('indexName'):
+                        return float(index.get('last', 0))
+            return 0
+        except Exception as e:
+            logger.error(f"NSE API error: {e}")
+            return 0
     
     def get_market_data(self, symbol: str = "NIFTY", timeframe: str = "5m", days: int = 5) -> List[MarketData]:
         """Get historical market data"""
@@ -64,10 +113,53 @@ class YahooFinanceProvider:
                     volume=int(row['Volume']),
                     vwap=float(row['Close'])
                 ))
-            return market_data
+            
+            if market_data:
+                return market_data
         except Exception as e:
-            logger.error(f"Error fetching market data from Yahoo: {e}")
-            return [self._get_mock_market_data(symbol)]
+            logger.warning(f"Yahoo market data failed: {e}")
+        
+        # Fallback to NSE
+        try:
+            logger.info(f"Trying NSE market data for {symbol}")
+            nse_data = self._get_nse_market_data(symbol)
+            if nse_data:
+                return nse_data
+        except Exception as e:
+            logger.warning(f"NSE market data failed: {e}")
+        
+        return [self._get_mock_market_data(symbol)]
+    
+    def _get_nse_market_data(self, symbol: str) -> List[MarketData]:
+        """Get market data from NSE"""
+        try:
+            indices = {
+                "NIFTY": "NIFTY 50",
+                "BANKNIFTY": "NIFTY BANK"
+            }
+            
+            self.nse_session.get('https://www.nseindia.com', timeout=10)
+            url = "https://www.nseindia.com/api/equity-stockIndices"
+            response = self.nse_session.get(url, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                for index in data.get('data', []):
+                    if indices.get(symbol) == index.get('indexName'):
+                        return [MarketData(
+                            symbol=symbol,
+                            timestamp=datetime.now(),
+                            open=float(index.get('open', 0)),
+                            high=float(index.get('dayHigh', 0)),
+                            low=float(index.get('dayLow', 0)),
+                            close=float(index.get('last', 0)),
+                            volume=int(index.get('totalTradedVolume', 0)),
+                            vwap=float(index.get('last', 0))
+                        )]
+            return []
+        except Exception as e:
+            logger.error(f"NSE market data error: {e}")
+            return []
     
     def get_option_chain(self, symbol: str = "NIFTY", expiry: datetime = None) -> OptionChainData:
         return self._get_mock_option_chain(symbol)
