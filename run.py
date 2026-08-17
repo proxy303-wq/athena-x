@@ -1,6 +1,7 @@
 # run.py - Main Entry Point
 import os
 import sys
+import signal
 import threading
 import time
 import webbrowser
@@ -18,11 +19,17 @@ os.environ['TF_CPP_MIN_VLOG_LEVEL'] = '3'
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+from backend.app.services.logger import setup_logging
+logger = setup_logging()
+
+def signal_handler(sig, frame):
+    """Handle Ctrl+C gracefully"""
+    print("\n" + "="*60)
+    print("SHUTTING DOWN ATHENA-X")
+    print("="*60)
+    sys.exit(0)
+
+signal.signal(signal.SIGINT, signal_handler)
 
 def open_browser():
     """Open browser after server starts"""
@@ -30,6 +37,7 @@ def open_browser():
     webbrowser.open("http://localhost:8000/dashboard")
 
 def start_scheduler():
+    """Start the auto-trade scheduler"""
     try:
         from backend.app.scheduler import AthenaScheduler
         scheduler = AthenaScheduler()
@@ -41,8 +49,10 @@ def start_scheduler():
         return None
 
 def start_services():
+    """Start all additional services"""
     services = {}
     
+    # Error Recovery
     try:
         from backend.app.services.error_recovery import ErrorRecovery
         recovery = ErrorRecovery()
@@ -52,6 +62,7 @@ def start_services():
     except Exception as e:
         logger.warning(f"Error recovery failed: {e}")
     
+    # Health Service
     try:
         from backend.app.services.health_service import HealthService
         health = HealthService()
@@ -60,6 +71,7 @@ def start_services():
     except Exception as e:
         logger.warning(f"Health service failed: {e}")
     
+    # Data Validator
     try:
         from backend.app.services.data_validator import DataValidator
         validator = DataValidator()
@@ -68,6 +80,7 @@ def start_services():
     except Exception as e:
         logger.warning(f"Data validator failed: {e}")
     
+    # ML Predictor (train in background)
     try:
         from backend.app.services.ml_predictor import MLPredictor
         ml = MLPredictor()
@@ -84,6 +97,7 @@ def start_services():
     except Exception as e:
         logger.warning(f"ML predictor failed: {e}")
     
+    # Backtest Engine
     try:
         from backend.app.services.backtest import BacktestEngine
         backtest = BacktestEngine()
@@ -92,6 +106,7 @@ def start_services():
     except Exception as e:
         logger.warning(f"Backtest engine failed: {e}")
     
+    # WebSocket Manager
     try:
         from backend.app.services.websocket_manager import WebSocketManager
         ws_manager = WebSocketManager()
@@ -103,6 +118,7 @@ def start_services():
     return services
 
 def show_account_info():
+    """Display real account info on startup"""
     try:
         from backend.app.services.account_service import AccountService
         account_service = AccountService()
@@ -122,6 +138,7 @@ def show_account_info():
         print(f"Could not fetch account info: {e}")
 
 def start_auto_close_service():
+    """Start auto-close service to exit positions at 3:15 PM"""
     try:
         from backend.app.services.auto_close_service import AutoCloseService
         auto_close = AutoCloseService()
@@ -133,6 +150,7 @@ def start_auto_close_service():
         return None
 
 def start_monitor():
+    """Start system health monitor"""
     try:
         from backend.app.services.monitor import SystemMonitor
         monitor = SystemMonitor()
@@ -144,6 +162,7 @@ def start_monitor():
         return None
 
 def start_alert_service():
+    """Initialize alert service"""
     try:
         from backend.app.services.alert_service import AlertService
         alert = AlertService()
@@ -155,6 +174,7 @@ def start_alert_service():
         return None
 
 def show_features():
+    """Display all enabled features"""
     features = [
         ("Live Market Data", "4 Indices (NIFTY, BANKNIFTY, FINNIFTY, SENSEX)"),
         ("ML Predictions", "LSTM Neural Network"),
@@ -178,23 +198,44 @@ if __name__ == "__main__":
     print("="*60)
     print("ATHENA-X PORTFOLIO MANAGER")
     print("="*60)
-    print(f"Server: http://localhost:8000")
-    print(f"Dashboard: http://localhost:8000/dashboard")
-    print(f"API Docs: http://localhost:8000/docs")
+    
+    # Check if running on Railway
+    is_railway = os.environ.get('RAILWAY_ENVIRONMENT') is not None
+    
+    if is_railway:
+        print(f"Server: http://0.0.0.0:{os.environ.get('PORT', 8000)}")
+        print(f"Dashboard: https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'your-project')}.up.railway.app/dashboard")
+        print(f"API Docs: https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN', 'your-project')}.up.railway.app/docs")
+    else:
+        print(f"Server: http://localhost:8000")
+        print(f"Dashboard: http://localhost:8000/dashboard")
+        print(f"API Docs: http://localhost:8000/docs")
+    
     print("="*60)
     
     show_features()
     
     print("Press Ctrl+C to stop\n")
     
+    # Show real account info
     show_account_info()
     
+    # Start all services
     services = start_services()
+    
+    # Start system monitor
     monitor = start_monitor()
+    
+    # Start alert service
     alert = start_alert_service()
+    
+    # Start auto-trade scheduler
     scheduler = start_scheduler()
+    
+    # Start auto-close service
     auto_close = start_auto_close_service()
     
+    # Print status
     print("\n" + "="*60)
     print("SYSTEM STATUS")
     print("="*60)
@@ -208,14 +249,20 @@ if __name__ == "__main__":
     print(f"  WebSocket: {'[OK] Active' if services.get('ws_manager') else '[ERROR] Disabled'}")
     print("="*60 + "\n")
     
-    threading.Thread(target=open_browser, daemon=True).start()
+    # Open browser (only if running locally)
+    if not is_railway:
+        threading.Thread(target=open_browser, daemon=True).start()
     
+    # Run server
     try:
+        port = int(os.environ.get('PORT', 8000))
+        host = "0.0.0.0" if is_railway else "127.0.0.1"
+        
         uvicorn.run(
             "backend.app.main:app",
-            host="0.0.0.0",
-            port=8000,
-            reload=False,  # ← Changed to False to avoid reload issues
+            host=host,
+            port=port,
+            reload=not is_railway,
             log_level="info"
         )
     except KeyboardInterrupt:
