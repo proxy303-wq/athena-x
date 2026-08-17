@@ -12,7 +12,7 @@ from ..services.health_service import HealthService
 from ..services.data_validator import DataValidator
 from ..services.ml_predictor import MLPredictor
 from ..services.backtest import BacktestEngine
-from ..providers.nse_provider import NSEProvider  # ✅ Use NSE instead of yfinance
+from ..providers.provider_manager import ProviderManager
 from ..providers.groww import get_groww_provider
 
 logger = logging.getLogger(__name__)
@@ -27,7 +27,10 @@ health_service = HealthService()
 validator = DataValidator()
 ml_predictor = MLPredictor()
 backtest_engine = BacktestEngine()
-nse_provider = NSEProvider()  # ✅ NSE provider (no rate limits, no IP blocking)
+provider_manager = ProviderManager()  # ✅ NSE provider (no rate limits)
+
+# ✅ Define nse_provider as alias for provider_manager
+nse_provider = provider_manager
 
 # Define all indices
 INDICES = {
@@ -148,22 +151,74 @@ async def get_ltp(symbol: str):
         logger.error(f"Error fetching LTP for {symbol}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/test-nse")
-async def test_nse():
-    """Test NSE API connection"""
+@router.get("/test-provider")
+async def test_provider():
+    """Test provider manager"""
     try:
-        ltp = nse_provider.get_ltp("NIFTY")
+        ltp = provider_manager.get_ltp("NIFTY")
         return {
-            "nse_working": ltp is not None,
+            "provider_working": ltp is not None,
             "nifty_ltp": ltp,
+            "providers_count": len(provider_manager.providers),
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         return {
-            "nse_working": False,
             "error": str(e),
             "timestamp": datetime.now().isoformat()
         }
+
+@router.get("/quote/{symbol}")
+async def get_quote(symbol: str):
+    """Get full quote for a symbol"""
+    try:
+        # Try NSE first
+        try:
+            quote = nse_provider.get_quote(symbol)
+            if quote:
+                return {"symbol": symbol, "quote": quote, "timestamp": datetime.now().isoformat()}
+        except:
+            pass
+        
+        # Fallback to Groww
+        quote = groww_provider.get_quote(symbol)
+        return {"symbol": symbol, "quote": quote, "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/ohlc/{symbol}")
+async def get_ohlc(symbol: str):
+    """Get OHLC data for a symbol"""
+    try:
+        # Try NSE first
+        try:
+            ohlc = nse_provider.get_ohlc(symbol)
+            if ohlc:
+                return {"symbol": symbol, "ohlc": ohlc, "timestamp": datetime.now().isoformat()}
+        except:
+            pass
+        
+        # Fallback to Groww
+        ohlc = groww_provider.get_ohlc(symbol)
+        return {"symbol": symbol, "ohlc": ohlc, "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/option-chain/{symbol}")
+async def get_option_chain(symbol: str, expiry: Optional[str] = None):
+    """Get option chain for a symbol"""
+    try:
+        expiry_date = None
+        if expiry:
+            expiry_date = datetime.fromisoformat(expiry)
+        chain = groww_provider.get_option_chain(symbol, expiry_date)
+        return {
+            "symbol": symbol,
+            "chain": chain.dict() if hasattr(chain, 'dict') else chain,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================
 # ANALYZE & DECISION
@@ -281,6 +336,22 @@ async def get_performance():
     except Exception as e:
         return {"performance": {}, "error": str(e)}
 
+@router.get("/performance/summary")
+async def get_performance_summary():
+    """Get performance summary"""
+    try:
+        performance = order_service.get_trade_performance()
+        return {
+            "total_pnl": performance.get("total_pnl", 0),
+            "winning_trades": performance.get("winning_trades", 0),
+            "losing_trades": performance.get("losing_trades", 0),
+            "total_trades": performance.get("total_trades", 0),
+            "win_rate": performance.get("win_rate", 0),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 # ============================================================
 # SMART ORDERS
 # ============================================================
@@ -337,6 +408,24 @@ async def get_smart_orders():
         return {"orders": orders, "count": len(orders), "timestamp": datetime.now().isoformat()}
     except Exception as e:
         return {"orders": [], "count": 0, "error": str(e)}
+
+@router.put("/smart/order/{order_id}")
+async def modify_smart_order(order_id: str, order_data: Dict):
+    """Modify a smart order"""
+    try:
+        result = order_service.modify_smart_order(order_id, **order_data)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/smart/order/{order_id}")
+async def cancel_smart_order(order_id: str):
+    """Cancel a smart order"""
+    try:
+        result = order_service.cancel_smart_order(order_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================================
 # MARGIN
@@ -401,7 +490,7 @@ async def ml_status():
     return {
         "is_trained": ml_predictor.is_trained,
         "model_available": ml_predictor.model is not None,
-        "tensorflow_available": ml_predictor.TENSORFLOW_AVAILABLE
+        "tensorflow_available": getattr(ml_predictor, 'TENSORFLOW_AVAILABLE', False)
     }
 
 # ============================================================
@@ -415,6 +504,57 @@ async def run_backtest(symbol: str = "NIFTY", days: int = 30):
         start_date = datetime.now() - timedelta(days=days)
         result = backtest_engine.run(symbol, start_date, datetime.now())
         return result
+    except Exception as e:
+        return {"error": str(e)}
+
+@router.get("/backtest/multiple")
+async def run_backtest_multiple(days: int = 30):
+    """Run backtest for multiple symbols"""
+    try:
+        symbols = ["NIFTY", "BANKNIFTY", "FINNIFTY"]
+        results = {}
+        for symbol in symbols:
+            try:
+                start_date = datetime.now() - timedelta(days=days)
+                results[symbol] = backtest_engine.run(symbol, start_date, datetime.now())
+            except Exception as e:
+                results[symbol] = {"error": str(e)}
+        return {"results": results, "days": days}
+    except Exception as e:
+        return {"error": str(e)}
+
+# ============================================================
+# WEBSOCKET TOKEN
+# ============================================================
+
+@router.get("/ws/token")
+async def get_ws_token():
+    """Get WebSocket token"""
+    try:
+        token = groww_provider.generate_socket_token()
+        return {"socket_token": token, "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ============================================================
+# INSTRUMENTS & CONTRACTS
+# ============================================================
+
+@router.get("/contracts")
+async def get_contracts(exchange: Optional[str] = None, segment: Optional[str] = None):
+    """Get all tradable contracts"""
+    try:
+        contracts = order_service.get_contracts(exchange, segment)
+        return {"contracts": contracts, "count": len(contracts), "timestamp": datetime.now().isoformat()}
+    except Exception as e:
+        return {"contracts": [], "count": 0, "error": str(e)}
+
+@router.get("/expiries/{symbol}")
+async def get_expiries(symbol: str):
+    """Get expiry dates for a symbol"""
+    try:
+        expiries = order_service.get_expiries(symbol)
+        return {"symbol": symbol, "expiries": expiries, "timestamp": datetime.now().isoformat()}
     except Exception as e:
         return {"error": str(e)}
 
@@ -434,7 +574,7 @@ async def dashboard():
             <head><title>Athena-X</title></head>
             <body style="font-family: Arial; background: #0f0f1a; color: #fff; padding: 40px;">
                 <h1>🧠 Athena-X Dashboard</h1>
-                <p>✅ System is running on Railway!</p>
+                <p>✅ System is running!</p>
                 <p>📚 <a href="/docs" style="color: #00ff88;">API Documentation</a></p>
                 <p>🔍 <a href="/health" style="color: #ffaa00;">Health Check</a></p>
                 <hr style="border-color: #2a2a4e;">
@@ -442,3 +582,25 @@ async def dashboard():
             </body>
         </html>
         """
+
+# ============================================================
+# STATUS
+# ============================================================
+
+@router.get("/status")
+async def get_status():
+    """Get system status"""
+    try:
+        orders = order_service.get_live_orders()
+        positions = order_service.get_live_positions()
+        return {
+            "status": "running",
+            "version": "5.0.0",
+            "timestamp": datetime.now().isoformat(),
+            "orders_count": len(orders),
+            "positions_count": len(positions),
+            "ml_trained": ml_predictor.is_trained,
+            "provider": "NSE + Groww"
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
